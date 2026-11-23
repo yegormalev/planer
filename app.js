@@ -890,11 +890,13 @@ function prodCalc() {
 function itemSheet(mi, ii) {
   const it = dayMeals(ui.date)[mi].items[ii]; if (!it) return;
   if (it.per) { productSheet(mi, it.code || '', { name: it.name, kcal: it.per[0], p: it.per[1], f: it.per[2], c: it.per[3], g: it.g }, '', ii); return; }
-  ui.form = { kind: 'fitem', mi, ii };
+  const q = String(it.text).match(/^(.*),\s*(\d+(?:[.,]\d+)?)\s*(г|мл|шт\.)$/), qty = q ? num(q[2]) : null;
+  ui.form = { kind: 'fitem', mi, ii, unit: q ? q[3] : '', base: q && it.k && qty > 0 ? it.k.map(x => x / qty) : null };
   const v = j => it.k ? ru(it.k[j]) : '';
   openSheet(`<div class="row sheet-top"><h3>${it.extra ? 'Добавленное блюдо' : 'Блюдо из меню'}</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
-  <label class="f">Название и количество<input id="i-text" value="${esc(it.text)}" autocomplete="off"></label>
-  <div class="lbl" style="margin-top:0">КБЖУ этой порции</div>
+  <label class="f">Название<input id="i-text" value="${esc(q ? q[1] : it.text)}" autocomplete="off"></label>
+  ${q ? `<label class="f">Количество, ${q[3] === 'шт.' ? 'штук' : q[3] === 'мл' ? 'миллилитров' : 'граммов'}<input id="i-qty" inputmode="decimal" value="${ru(qty)}"></label>` : ''}
+  <div class="lbl" style="margin-top:0">КБЖУ этой порции${q && it.k ? ' · пересчитывается при смене количества' : ''}</div>
   <div class="four"><label class="f">Ккал<input id="i-0" inputmode="decimal" value="${v(0)}"></label><label class="f">Белки<input id="i-1" inputmode="decimal" value="${v(1)}"></label>
   <label class="f">Жиры<input id="i-2" inputmode="decimal" value="${v(2)}"></label><label class="f">Углев.<input id="i-3" inputmode="decimal" value="${v(3)}"></label></div>
   <p class="muted small" style="margin:0 0 12px">Изменится только ${ui.date === today() ? 'сегодняшний день' : short(ui.date)}. Чтобы поменять блюдо на все недели, откройте «Изменить меню».</p>
@@ -1075,8 +1077,10 @@ const actions = {
   },
   itemEdit: el => { ensureDay(ui.date); itemSheet(Number(el.dataset.m), Number(el.dataset.i)); return false; },
   itemSave: () => {
-    const f = ui.form, m = ensureDay(ui.date).meals[f.mi], it = m.items[f.ii], text = $('#i-text').value.trim();
+    const f = ui.form, m = ensureDay(ui.date).meals[f.mi], it = m.items[f.ii], qEl = $('#i-qty'), qty = qEl ? num(qEl.value) : null;
+    let text = $('#i-text').value.trim();
     if (!text) { toast('Введите название'); return false; }
+    if (qEl) { if (!(qty > 0)) { toast('Введите количество'); qEl.focus(); return false; } text = `${text}, ${ru(qty)} ${f.unit}`; }
     const raw = [0, 1, 2, 3].map(j => $('#i-' + j).value.trim()), k = raw.map(x => num(x) || 0);
     it.text = text; it.k = raw.some(x => x !== '') ? [Math.round(k[0]), ...k.slice(1).map(x => Math.round(x * 10) / 10)] : it.k;
     if (!it.extra) m.edited = true;
@@ -1181,7 +1185,8 @@ document.addEventListener('change', e => {
   if (r !== false) render();
 });
 
-document.addEventListener('input', e => { if (/^p-(kcal|p|f|c|g)$/.test(e.target.id)) prodCalc(); if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
+document.addEventListener('input', e => { if (/^p-(kcal|p|f|c|g)$/.test(e.target.id)) prodCalc();
+  if (e.target.id === 'i-qty' && ui.form && ui.form.base) { const q = num(e.target.value) || 0; ui.form.base.forEach((x, j) => { $('#i-' + j).value = ru(j ? x * q : Math.round(x * q)); }); } if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'quick') { e.preventDefault(); actions.quick(); render(); const q = $('#quick'); if (q) q.focus(); } });
 
 /* Перетаскивание карточек мышью (на телефоне работают кнопки под карточкой) */
