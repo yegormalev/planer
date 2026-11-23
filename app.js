@@ -2,6 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
+const APP_VERSION = 7;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -654,7 +655,8 @@ function viewMore() {
     <button class="list-btn" data-act="import"><span>Восстановить из копии</span><span class="muted">›</span></button>
     <button class="list-btn" data-act="shareApp"><span>Поделиться ссылкой на планер</span><span class="muted">›</span></button>
   </div>
-  <p class="muted small" style="margin:0 4px">Все записи хранятся только на этом устройстве. Задач: ${state.items.length}, заметок: ${state.notes.length}.</p>`;
+  <p class="muted small" style="margin:0 4px">Все записи хранятся только на этом устройстве. Задач: ${state.items.length}, заметок: ${state.notes.length}.</p>
+  <div class="row spread" style="margin:14px 4px 0"><span class="muted small">Версия ${APP_VERSION}</span><button class="btn sm ghost" data-act="update">Проверить обновление</button></div>`;
 }
 
 function searchOut() {
@@ -887,6 +889,10 @@ function prodCalc() {
   o.innerHTML = `<span><b>${Math.round(r.tot[0])}</b> ккал</span><span>Б <b>${ru(r.tot[1])}</b></span><span>Ж <b>${ru(r.tot[2])}</b></span><span>У <b>${ru(r.tot[3])}</b></span>`;
 }
 
+function qtyCalc() {
+  if (!ui.form || !ui.form.base) return; const q = num($('#i-qty').value) || 0;
+  ui.form.base.forEach((x, j) => { $('#i-' + j).value = ru(j ? x * q : Math.round(x * q)); });
+}
 function itemSheet(mi, ii) {
   const it = dayMeals(ui.date)[mi].items[ii]; if (!it) return;
   if (it.per) { productSheet(mi, it.code || '', { name: it.name, kcal: it.per[0], p: it.per[1], f: it.per[2], c: it.per[3], g: it.g }, '', ii); return; }
@@ -895,7 +901,8 @@ function itemSheet(mi, ii) {
   const v = j => it.k ? ru(it.k[j]) : '';
   openSheet(`<div class="row sheet-top"><h3>${it.extra ? 'Добавленное блюдо' : 'Блюдо из меню'}</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
   <label class="f">Название<input id="i-text" value="${esc(q ? q[1] : it.text)}" autocomplete="off"></label>
-  ${q ? `<label class="f">Количество, ${q[3] === 'шт.' ? 'штук' : q[3] === 'мл' ? 'миллилитров' : 'граммов'}<input id="i-qty" inputmode="decimal" value="${ru(qty)}"></label>` : ''}
+  ${q ? `<div class="f">Количество, ${q[3] === 'шт.' ? 'штук' : q[3] === 'мл' ? 'мл' : 'граммов'}
+    <div class="step"><button data-act="qtyStep" data-d="${q[3] === 'шт.' ? -1 : -10}" aria-label="Меньше">−</button><input id="i-qty" class="inp" inputmode="decimal" value="${ru(qty)}"><button data-act="qtyStep" data-d="${q[3] === 'шт.' ? 1 : 10}" aria-label="Больше">+</button></div></div>` : ''}
   <div class="lbl" style="margin-top:0">КБЖУ этой порции${q && it.k ? ' · пересчитывается при смене количества' : ''}</div>
   <div class="four"><label class="f">Ккал<input id="i-0" inputmode="decimal" value="${v(0)}"></label><label class="f">Белки<input id="i-1" inputmode="decimal" value="${v(1)}"></label>
   <label class="f">Жиры<input id="i-2" inputmode="decimal" value="${v(2)}"></label><label class="f">Углев.<input id="i-3" inputmode="decimal" value="${v(3)}"></label></div>
@@ -1075,6 +1082,7 @@ const actions = {
     if (old) items[f.ii] = it; else items.push(it);
     save(); closeSheet(); toast(old ? 'Сохранено' : 'Продукт добавлен');
   },
+  qtyStep: el => { const i = $('#i-qty'), v = Math.max(0, (num(i.value) || 0) + Number(el.dataset.d)); i.value = ru(v); qtyCalc(); return false; },
   itemEdit: el => { ensureDay(ui.date); itemSheet(Number(el.dataset.m), Number(el.dataset.i)); return false; },
   itemSave: () => {
     const f = ui.form, m = ensureDay(ui.date).meals[f.mi], it = m.items[f.ii], qEl = $('#i-qty'), qty = qEl ? num(qEl.value) : null;
@@ -1135,6 +1143,7 @@ const actions = {
     return false;
   },
   notifTest: () => { notify('Проверка', 'Так выглядит напоминание планера', 'test'); return false; },
+  update: async () => { const v = await checkUpdate(true); if (v === false) toast('Нет связи, попробуйте позже'); else if (v === APP_VERSION) toast('У вас последняя версия'); return false; },
   export: () => { state.settings.lastExport = today(); save(); download(new File([JSON.stringify(state, null, 1)], `planer-${today()}.json`, { type: 'application/json' })); },
   import: () => { $('#importFile').click(); return false; }
 };
@@ -1186,7 +1195,7 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('input', e => { if (/^p-(kcal|p|f|c|g)$/.test(e.target.id)) prodCalc();
-  if (e.target.id === 'i-qty' && ui.form && ui.form.base) { const q = num(e.target.value) || 0; ui.form.base.forEach((x, j) => { $('#i-' + j).value = ru(j ? x * q : Math.round(x * q)); }); } if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
+  if (e.target.id === 'i-qty') qtyCalc(); if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'quick') { e.preventDefault(); actions.quick(); render(); const q = $('#quick'); if (q) q.focus(); } });
 
 /* Перетаскивание карточек мышью (на телефоне работают кнопки под карточкой) */
@@ -1210,11 +1219,30 @@ $('#importFile').addEventListener('change', async e => {
   } catch (_) { toast('Это не файл резервной копии планера'); }
 });
 
+/* ---------- Обновление приложения ---------- */
+let updating = false;
+async function checkUpdate(force) {
+  if (updating || !location.protocol.startsWith('http')) return APP_VERSION;
+  let v;
+  try { const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' }); v = (await r.json()).v; } catch (_) { return false; }
+  if (v === APP_VERSION || typeof v !== 'number' || v < APP_VERSION) return APP_VERSION;
+  const a = document.activeElement, typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox';
+  if (!force && (sheet.open || typing)) return v;                 // не мешаем вводу, обновимся при следующей проверке
+  updating = true; toast('Обновляю планер…');
+  try {
+    const reg = await navigator.serviceWorker.getRegistration(); if (reg) await reg.update();
+    const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k)));
+  } catch (_) { /* обновимся обычной перезагрузкой */ }
+  location.reload(); return v;
+}
+
 /* ---------- Запуск ---------- */
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 render();
 checkReminders();
+checkUpdate();
+setInterval(checkUpdate, 600000);
 setInterval(tick, 1000);
 setInterval(() => {
   checkReminders();
@@ -1222,7 +1250,7 @@ setInterval(() => {
   if (ui.tab === 'today' && !sheet.open && !typing) render();
 }, 30000);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return; checkReminders();
+  if (document.hidden) return; checkReminders(); checkUpdate();
   const a = document.activeElement, typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox';
   if (!sheet.open && !typing) render();
 });
