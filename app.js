@@ -143,7 +143,12 @@ function eatenTotals(meals) {
   }
   return { kcal: Math.round(t.kcal), p: Math.round(t.p), f: Math.round(t.f), c: Math.round(t.c), repl };
 }
-const dayTotals = meals => meals.reduce((s, m) => ({ kcal: s.kcal + (m.kcal || 0), p: s.p + (m.p || 0), f: s.f + (m.f || 0), c: s.c + (m.c || 0) }), { kcal: 0, p: 0, f: 0, c: 0 });
+function mealTot(m) {                                      // план приёма пищи: по позициям, если у всех есть КБЖУ
+  const pl = m.items.filter(i => !i.extra);
+  if (m.edited || (pl.length && pl.every(i => i.k))) { const t = pl.reduce((a, i) => i.k ? a.map((x, j) => x + i.k[j]) : a, [0, 0, 0, 0]); return { kcal: Math.round(t[0] / 10) * 10, p: Math.round(t[1]), f: Math.round(t[2]), c: Math.round(t[3]) }; }
+  return { kcal: m.kcal || 0, p: m.p || 0, f: m.f || 0, c: m.c || 0 };
+}
+const dayTotals = meals => meals.reduce((s, m) => { const t = mealTot(m); return { kcal: s.kcal + t.kcal, p: s.p + t.p, f: s.f + t.f, c: s.c + t.c }; }, { kcal: 0, p: 0, f: 0, c: 0 });
 
 /* ---------- Развитие ---------- */
 const learnIdx = date => { const i = diffDays(state.learn.start, date); return i >= 0 && i < PLAN.length ? i : null; };
@@ -381,20 +386,20 @@ function viewFood() {
 
   const meals = dayMeals(ui.date), rec = state.food[ui.date] || {}, ds = foodStat([ui.date]), tot = dayTotals(meals), eat = eatenTotals(meals);
   const mealsHtml = meals.map((m, mi) => {
-    const st = mealStatus(m), allE = m.items.length && m.items.every(i => i.eaten || i.extra) && m.items.some(i => !i.extra);
+    const st = mealStatus(m), mt = mealTot(m), allE = m.items.length && m.items.every(i => i.eaten || i.extra) && m.items.some(i => !i.extra);
     return `<div class="card meal">
       <div class="meal-head"><input type="checkbox" data-ch="mealAll" data-m="${mi}" ${allE ? 'checked' : ''} aria-label="Съел всё">
-        <div class="t">${esc(m.name)}<small>${esc(m.time || '')}${m.kcal ? ` · ${m.kcal} ккал · Б ${m.p} г` : ''}</small></div>
+        <div class="t">${esc(m.name)}<small>${esc(m.time || '')}${mt.kcal ? ` · ${mt.kcal} ккал · Б ${mt.p} г` : ''}</small></div>
         <span class="badge ${st.k}">${st.t}</span></div>
       ${m.items.map((it, ii) => {
         const k = `${ui.date}|${mi}|${ii}`, open = it.repl || ui.swap.has(k);
         if (it.extra) return `<div class="fitem"><div class="line">
           <input type="checkbox" class="sm" data-ch="fItem" data-m="${mi}" data-i="${ii}" ${it.eaten ? 'checked' : ''}>
-          <span>${esc(it.text)}<small class="muted" style="display:block">добавлено · ${it.k ? `${Math.round(it.k[0])} ккал · Б ${ru(it.k[1])} · Ж ${ru(it.k[2])} · У ${ru(it.k[3])}` : ''}</small></span>
-          <button class="x" data-act="extraDel" data-m="${mi}" data-i="${ii}" aria-label="Удалить">×</button></div></div>`;
+          <button class="ftxt" data-act="itemEdit" data-m="${mi}" data-i="${ii}">${esc(it.text)}<small class="muted" style="display:block">добавлено · ${it.k ? `${Math.round(it.k[0])} ккал · Б ${ru(it.k[1])} · Ж ${ru(it.k[2])} · У ${ru(it.k[3])}` : ''}</small></button>
+          <button class="x" data-act="itemEdit" data-m="${mi}" data-i="${ii}" aria-label="Изменить">✎</button></div></div>`;
         return `<div class="fitem ${it.repl ? 'replaced' : ''}"><div class="line">
           <input type="checkbox" class="sm" data-ch="fItem" data-m="${mi}" data-i="${ii}" ${it.eaten ? 'checked' : ''}>
-          <span>${esc(it.text)}</span>
+          <button class="ftxt" data-act="itemEdit" data-m="${mi}" data-i="${ii}">${esc(it.text)}${it.k ? `<small class="muted" style="display:block">${Math.round(it.k[0])} ккал · Б ${ru(it.k[1])}</small>` : ''}</button>
           ${open ? '' : `<button class="swap" data-act="swap" data-k="${k}">Заменил</button>`}</div>
           ${open ? `<input class="inp inline" data-ch="fRepl" data-m="${mi}" data-i="${ii}" value="${esc(it.repl)}" placeholder="На что заменил">` : ''}</div>`;
       }).join('')}
@@ -857,11 +862,11 @@ async function lookup(code, mi) {
   if (!ui.form || ui.form.kind !== 'wait') return;           // шторку уже закрыли
   productSheet(mi, code, p || { name: '', kcal: '', p: '', f: '', c: '', g: 100 }, note);
 }
-function productSheet(mi, code, p, note) {
+function productSheet(mi, code, p, note, editIdx) {
   stopScan();
-  const meal = dayMeals(ui.date)[mi]; ui.form = { kind: 'prodEdit', mi, code: code || '' };
+  const meal = dayMeals(ui.date)[mi], ed = editIdx != null; ui.form = { kind: 'prodEdit', mi, code: code || '', ii: ed ? editIdx : null };
   const v = x => x === '' || x == null ? '' : ru(x);
-  openSheet(`<div class="row sheet-top"><h3>Продукт</h3><button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button></div>
+  openSheet(`<div class="row sheet-top"><h3>Продукт</h3>${ed ? '<button class="btn sm plain" data-act="close">Закрыть</button>' : `<button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button>`}</div>
   ${note ? `<div class="hint">${note}</div>` : ''}
   <label class="f">Название<input id="p-name" value="${esc(p.name || '')}" placeholder="Например: йогурт греческий" autocomplete="off"></label>
   <div class="lbl" style="margin-top:0">На 100 г продукта${code ? ` · штрихкод ${esc(code)}` : ''}</div>
@@ -869,7 +874,8 @@ function productSheet(mi, code, p, note) {
   <label class="f">Жиры<input id="p-f" inputmode="decimal" value="${v(p.f)}"></label><label class="f">Углев.<input id="p-c" inputmode="decimal" value="${v(p.c)}"></label></div>
   <label class="f">Сколько съел, граммов<input id="p-g" inputmode="decimal" value="${v(p.g || 100)}"></label>
   <div class="card" style="background:var(--field);box-shadow:none"><div class="muted small">В этой порции</div><div class="macro" id="p-out" style="font-size:15px;margin-bottom:0"></div></div>
-  <button class="btn block" data-act="prodSave">Добавить в «${esc(meal ? meal.name : 'приём пищи')}»</button>`);
+  <button class="btn block" data-act="prodSave">${ed ? 'Сохранить' : `Добавить в «${esc(meal ? meal.name : 'приём пищи')}»`}</button>
+  ${ed ? '<button class="btn danger block" data-act="itemDel">Удалить из этого дня</button>' : ''}`);
   prodCalc();
 }
 function prodRead() {
@@ -879,6 +885,21 @@ function prodRead() {
 function prodCalc() {
   const o = $('#p-out'); if (!o) return; const r = prodRead();
   o.innerHTML = `<span><b>${Math.round(r.tot[0])}</b> ккал</span><span>Б <b>${ru(r.tot[1])}</b></span><span>Ж <b>${ru(r.tot[2])}</b></span><span>У <b>${ru(r.tot[3])}</b></span>`;
+}
+
+function itemSheet(mi, ii) {
+  const it = dayMeals(ui.date)[mi].items[ii]; if (!it) return;
+  if (it.per) { productSheet(mi, it.code || '', { name: it.name, kcal: it.per[0], p: it.per[1], f: it.per[2], c: it.per[3], g: it.g }, '', ii); return; }
+  ui.form = { kind: 'fitem', mi, ii };
+  const v = j => it.k ? ru(it.k[j]) : '';
+  openSheet(`<div class="row sheet-top"><h3>${it.extra ? 'Добавленное блюдо' : 'Блюдо из меню'}</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
+  <label class="f">Название и количество<input id="i-text" value="${esc(it.text)}" autocomplete="off"></label>
+  <div class="lbl" style="margin-top:0">КБЖУ этой порции</div>
+  <div class="four"><label class="f">Ккал<input id="i-0" inputmode="decimal" value="${v(0)}"></label><label class="f">Белки<input id="i-1" inputmode="decimal" value="${v(1)}"></label>
+  <label class="f">Жиры<input id="i-2" inputmode="decimal" value="${v(2)}"></label><label class="f">Углев.<input id="i-3" inputmode="decimal" value="${v(3)}"></label></div>
+  <p class="muted small" style="margin:0 0 12px">Изменится только ${ui.date === today() ? 'сегодняшний день' : short(ui.date)}. Чтобы поменять блюдо на все недели, откройте «Изменить меню».</p>
+  <button class="btn block" data-act="itemSave">Сохранить</button>
+  <button class="btn danger block" data-act="itemDel">Удалить из этого дня</button>`);
 }
 
 /* ---------- Поделиться, экспорт ---------- */
@@ -1047,10 +1068,26 @@ const actions = {
     if (!r.per[0] && !r.per[1] && !r.per[2] && !r.per[3]) { toast('Введите КБЖУ на 100 г'); $('#p-kcal').focus(); return false; }
     if (r.g <= 0) { toast('Введите граммы'); $('#p-g').focus(); return false; }
     state.products[f.code || 'm' + uid()] = { name: r.name, kcal: r.per[0], p: r.per[1], f: r.per[2], c: r.per[3], g: r.g, used: Date.now() };
-    ensureDay(ui.date).meals[f.mi].items.push({ text: `${r.name}, ${ru(r.g)} г`, eaten: true, repl: '', extra: true, k: [Math.round(r.tot[0]), ...r.tot.slice(1).map(x => Math.round(x * 10) / 10)] });
-    save(); closeSheet(); toast('Продукт добавлен');
+    const items = ensureDay(ui.date).meals[f.mi].items, old = f.ii != null ? items[f.ii] : null;
+    const it = { text: `${r.name}, ${ru(r.g)} г`, eaten: old ? old.eaten : true, repl: '', extra: true, k: [Math.round(r.tot[0]), ...r.tot.slice(1).map(x => Math.round(x * 10) / 10)], name: r.name, per: r.per, g: r.g, code: f.code || '' };
+    if (old) items[f.ii] = it; else items.push(it);
+    save(); closeSheet(); toast(old ? 'Сохранено' : 'Продукт добавлен');
   },
-  extraDel: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items.splice(Number(el.dataset.i), 1); save(); },
+  itemEdit: el => { ensureDay(ui.date); itemSheet(Number(el.dataset.m), Number(el.dataset.i)); return false; },
+  itemSave: () => {
+    const f = ui.form, m = ensureDay(ui.date).meals[f.mi], it = m.items[f.ii], text = $('#i-text').value.trim();
+    if (!text) { toast('Введите название'); return false; }
+    const raw = [0, 1, 2, 3].map(j => $('#i-' + j).value.trim()), k = raw.map(x => num(x) || 0);
+    it.text = text; it.k = raw.some(x => x !== '') ? [Math.round(k[0]), ...k.slice(1).map(x => Math.round(x * 10) / 10)] : it.k;
+    if (!it.extra) m.edited = true;
+    save(); closeSheet(); toast('Сохранено');
+  },
+  itemDel: () => {
+    const f = ui.form, m = ensureDay(ui.date).meals[f.mi], it = m.items[f.ii];
+    if (!confirm(`Удалить «${it.text}» из этого дня?`)) return false;
+    if (!it.extra) m.edited = true;
+    m.items.splice(f.ii, 1); ui.swap.clear(); save(); closeSheet();
+  },
   swap: el => { ui.swap.add(el.dataset.k); render(); const [, m, i] = el.dataset.k.split('|'); const inp = document.querySelector(`[data-ch="fRepl"][data-m="${m}"][data-i="${i}"]`); if (inp) inp.focus(); return false; },
   mealAdd: () => { (state.menu.days[wdi(ui.date)] ||= []).push({ name: 'Приём пищи', time: '', items: [] }); save(); },
   mealDel: el => { if (!confirm('Удалить приём пищи из меню?')) return false; state.menu.days[wdi(ui.date)].splice(Number(el.dataset.i), 1); save(); },

@@ -341,3 +341,7 @@ ol.steps li { margin-bottom: 4px; }
 .cam canvas { display: none; }
 .cam::after { content: ""; position: absolute; left: 10%; right: 10%; top: 50%; height: 2px; background: #ff4d4f; box-shadow: 0 0 8px #ff4d4f; opacity: .8; }
 .cam-msg { color: #fff; padding: 20px; text-align: center; font-size: 15px; position: absolute; z-index: 1; }
+
+.ftxt { flex: 1; min-width: 0; font-size: 15px; word-break: break-word; }
+.fitem.replaced .ftxt { text-decoration: line-through; color: var(--muted); }
+.fitem .x { font-size: 17px; color: var(--accent); }
