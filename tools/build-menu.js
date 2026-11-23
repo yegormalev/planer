@@ -75,4 +75,14 @@ const out = days.map(([label, meals], di) => {
 });
 const avg = out.reduce((s, d) => s + d.kcal, 0) / 7;
 console.log('avg', Math.round(avg), 'avg P', Math.round(out.reduce((s, d) => s + d.p, 0) / 7));
-fs.writeFileSync(__dirname + '/../menu-data.js', '// Сгенерировано tools/build-menu.js\nwindow.MENU_WEEK = ' + JSON.stringify(out, null, 1) + ';\n');
+
+// Список покупок на неделю
+const GROUPS = [['Мясо и рыба', ['chicken', 'turkey', 'beef', 'cod', 'salmon', 'tuna']], ['Молочное и яйца', ['egg', 'curd5', 'curd2', 'yog', 'milk', 'cheese', 'whey']],
+  ['Крупы и хлеб', ['oats', 'buck', 'rice', 'pasta', 'bulgur', 'bread', 'crisp']], ['Овощи и фрукты', ['veg', 'potato', 'banana', 'apple', 'berry', 'avo']], ['Прочее', ['beans', 'nuts', 'honey', 'oil']]];
+const sum = {};
+days.forEach(([, meals]) => meals.forEach(([, , items]) => items.forEach(([k, g]) => { sum[k] = (sum[k] || 0) + g; })));
+const amt = (k, g) => k === 'egg' ? `${Math.ceil(g / 55)} шт.` : k === 'banana' ? `${Math.round(g / 120)} шт.` : k === 'apple' ? `${Math.round(g / 180)} шт.`
+  : k === 'milk' ? `${String(Math.round(g / 100) / 10).replace('.', ',')} л` : g >= 1000 ? `${String(Math.round(g / 100) / 10).replace('.', ',')} кг` : `${g} г`;
+const shop = GROUPS.map(([name, keys]) => ({ name, items: keys.filter(k => sum[k]).map(k => ({ id: k, name: F[k][0].replace(/\s*\(.*\)/, '').replace(' запечённый или варёный', ''), amt: amt(k, sum[k]) })) }));
+console.log(shop.map(g => g.name + ': ' + g.items.map(i => i.name + ' ' + i.amt).join(', ')).join('\n'));
+fs.writeFileSync(__dirname + '/../menu-data.js', '// Сгенерировано tools/build-menu.js\nwindow.MENU_WEEK = ' + JSON.stringify(out, null, 1) + ';\nwindow.MENU_SHOP = ' + JSON.stringify(shop, null, 1) + ';\n');

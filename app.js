@@ -62,7 +62,7 @@ function load() {
     items: s.items || [], notes: s.notes || [], cards: s.cards || [], food: s.food || {}, body: s.body || {},
     menu: s.menu && s.menu.ver === 2 ? s.menu : buildMenu(),
     learn: Object.assign({ start: today(), done: {}, custom: {}, secs: {}, timer: null }, s.learn || {}),
-    seeds: s.seeds || {}, settings: s.settings || {}
+    seeds: s.seeds || {}, settings: s.settings || {}, day: s.day || {}, shop: s.shop || {}
   };
   for (const d in st.food) if (st.food[d].weight && !st.body[d]) { st.body[d] = { w: st.food[d].weight }; delete st.food[d].weight; }
   if (!st.seeds.train) {                                   // тренировки на 8 недель вперёд
@@ -85,7 +85,7 @@ function save() {
 save();
 
 const ui = { tab: 'today', sub: null, date: today(), month: today().slice(0, 7) + '-01', cat: 'work', noteCat: 'all', notesView: 'notes',
-  foodView: 'menu', foodEdit: false, swap: new Set(), form: null, learnDay: null, learnTrack: 'all' };
+  foodView: 'menu', foodEdit: false, q: '', swap: new Set(), form: null, learnDay: null, learnTrack: 'all' };
 
 /* ---------- Время задач ---------- */
 function endOf(it) { return it.end || (it.time && it.dur ? hhmm(mins(it.time) + Math.round(it.dur * 60)) : ''); }
@@ -194,6 +194,7 @@ function viewToday() {
   const next = timed.find(i => !i.done && mins(i.time) > nowM);
   const hello = now.getHours() < 5 ? 'Доброй ночи' : now.getHours() < 12 ? 'Доброе утро' : now.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
   const nextMeal = dayMeals(t).find(m => m.items.some(i => !i.eaten && !i.repl));
+  const late = lateItems(), hb = state.day[t] || {}, wtr = hb.water || 0;
 
   let nowCard = '';
   if (cur) {
@@ -207,7 +208,7 @@ function viewToday() {
   const row = i => {
     const c = cat(i.cat), e = endOf(i);
     return `<div class="tl ${i.done ? 'done' : ''} ${cur && cur.id === i.id ? 'cur' : ''}" style="--c:${c.color}">
-      <div class="tl-t">${i.time ? `<b>${i.time}</b>${e ? `<span>${e}</span>` : ''}` : i.dur ? `<span>≈ ${ru(i.dur)} ч</span>` : '<span>весь день</span>'}</div>
+      <div class="tl-t">${i.time ? `<b>${i.time}</b>${e ? `<span>${e}</span>` : ''}` : i.dur ? `<span>≈ ${ru(i.dur)} ч</span>` : '<span>без времени</span>'}</div>
       <button class="tl-b" data-act="edit" data-id="${i.id}"><div class="title">${esc(i.title)}</div>
         <div class="meta"><span>${c.name}</span>${i.who ? `<span>👥 ${esc(i.who)}</span>` : ''}${i.place ? `<span>${esc(i.place)}</span>` : ''}${i.subs && i.subs.length ? `<span>${i.subs.filter(s => s.done).length}/${i.subs.length}</span>` : ''}</div></button>
       <input type="checkbox" data-ch="done" data-id="${i.id}" ${i.done ? 'checked' : ''} aria-label="Сделано"></div>`;
@@ -224,6 +225,11 @@ function viewToday() {
     <button data-act="goBody"><b>${state.body[t] && state.body[t].w ? ru(state.body[t].w) : '—'}<small> кг</small></b><span>вес сегодня</span></button>
   </div>
   ${nowCard ? `<div class="nows">${nowCard}</div>` : ''}
+  <div class="quick"><input id="quick" class="inp" placeholder="Быстро: 14:00 Созвон с командой" enterkeyhint="done" autocomplete="off"><button class="btn" data-act="quick" aria-label="Добавить">+</button></div>
+  ${late.length ? `<div class="row spread"><h2>Не сделано раньше · ${late.length}</h2><button class="btn sm ghost" data-act="lateAll">Все на сегодня</button></div>
+  <div class="card">${late.slice(0, 6).map(i => `<div class="item"><input type="checkbox" data-ch="done" data-id="${i.id}" aria-label="Сделано">
+    <div class="body"><button class="open" data-act="edit" data-id="${i.id}"><div class="title">${esc(i.title)}</div><div class="meta"><span>${short(i.date)}</span><span>${cat(i.cat).name}</span></div></button></div>
+    <button class="swap" data-act="toToday" data-id="${i.id}">На сегодня</button></div>`).join('')}${late.length > 6 ? `<div class="muted small" style="padding-top:8px">и ещё ${late.length - 6}</div>` : ''}</div>` : ''}
   <h2>Расписание</h2>
   <div class="card tlc">${timed.length ? timed.map(row).join('') : '<div class="empty">Нет дел со временем. Нажмите «+», чтобы добавить.</div>'}</div>
   ${free.length ? `<h2>В течение дня</h2><div class="card tlc">${free.map(row).join('')}</div>` : ''}
@@ -232,7 +238,60 @@ function viewToday() {
     <span><b>${esc(PLAN[li][1])}</b><small>Развитие · ${Math.floor(ls / 60)} из 60 минут</small></span><em>›</em></button>` : ''}
   <button class="card link" data-act="tab" data-tab="food"><i class="tile" style="background:${cat('food').color}">🍽</i>
     <span><b>${nextMeal ? `${esc(nextMeal.name)}${nextMeal.time ? ' в ' + nextMeal.time : ''}` : 'Все приёмы пищи отмечены'}</b><small>Питание · отмечено ${fs.touched} из ${fs.total}</small></span><em>›</em></button>
+  <button class="card link" data-act="weekSum" data-o="0"><i class="tile" style="background:#f59e0b">∑</i><span><b>Итоги недели</b><small>Дела, тренировки, питание, вес, развитие</small></span><em>›</em></button>
+  <h2>Привычки дня</h2>
+  <div class="card">
+    <div class="hab"><div><b>Вода</b><small>${ru(wtr * 0.25)} из 2,5 л · стакан 250 мл</small></div>
+      <div class="cnt"><button data-act="water" data-d="-1" aria-label="Минус стакан">−</button><b>${wtr}</b><button data-act="water" data-d="1" aria-label="Плюс стакан">+</button></div></div>
+    <div class="drops">${Array.from({ length: 10 }, (_, k) => `<i class="${k < wtr ? 'on' : ''}"></i>`).join('')}</div>
+    <div class="two"><label class="f" style="margin:0">Шаги<input inputmode="numeric" data-ch="steps" value="${hb.steps || ''}" placeholder="цель 8–10 тысяч"></label>
+    <label class="f" style="margin:0">Сон, часов<input inputmode="decimal" data-ch="sleep" value="${hb.sleep ? ru(hb.sleep) : ''}" placeholder="от 7"></label></div>
+  </div>
   <button class="fab" data-act="add" aria-label="Добавить">+</button>`;
+}
+
+const lateItems = () => { const t = today(); return state.items.filter(i => i.date < t && !i.done && !i.seed && !i.series).sort(byTime); };
+
+/* ---------- Итоги недели ---------- */
+function weekStats(mon) {
+  const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(mon, i)), t = today(), past = days.filter(d => d <= t);
+  const items = state.items.filter(i => i.date >= days[0] && i.date <= days[6]), sport = items.filter(i => i.cat === 'sport');
+  const fs = foodStat(past.length ? past : days), avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const w = days.filter(d => state.body[d] && state.body[d].w != null).map(d => state.body[d].w);
+  const f = days.filter(d => state.body[d] && state.body[d].fat != null).map(d => state.body[d].fat);
+  const hab = k => avg(days.map(d => (state.day[d] || {})[k]).filter(v => v));
+  return {
+    days, total: items.length, done: items.filter(i => i.done).length, sportT: sport.length, sportD: sport.filter(i => i.done).length,
+    perDay: days.map(d => { const a = items.filter(i => i.date === d); return { n: a.length, d: a.filter(i => i.done).length }; }),
+    food: fs, learnMin: Math.floor(days.reduce((x, d) => x + learnSecs(d), 0) / 60),
+    learnDays: days.filter(d => { const i = learnIdx(d); return i != null && learnProgress(i).full; }).length,
+    w, f, water: hab('water'), steps: hab('steps'), sleep: hab('sleep')
+  };
+}
+function weekText(st) {
+  const dl = a => a.length > 1 ? `${a[a.length - 1] - a[0] > 0 ? '+' : ''}${ru(a[a.length - 1] - a[0])} кг` : 'мало замеров';
+  return `Итоги недели ${short(st.days[0])} – ${short(st.days[6])}\n\nДела: ${st.done} из ${st.total}\nТренировки: ${st.sportD} из ${st.sportT}\nПитание по плану: ${st.food.pct}%\nРазвитие: ${dur(st.learnMin)}\nВес: ${dl(st.w)}\nЖир: ${dl(st.f)}`;
+}
+function weekSheet(off) {
+  const mon = addDays(monday(today()), off * 7), st = weekStats(mon), mx = Math.max(1, ...st.perDay.map(p => p.n));
+  const dl = (a, goodDown) => a.length > 1 ? `<em class="${a[a.length - 1] === a[0] ? '' : (a[a.length - 1] < a[0]) === goodDown ? 'good' : 'bad'}">${a[a.length - 1] - a[0] > 0 ? '+' : ''}${ru(a[a.length - 1] - a[0])} кг</em>` : '<em>мало замеров</em>';
+  const line = (name, val, pct) => `<div class="wk"><div class="row spread"><span>${name}</span><b>${val}</b></div>${pct != null ? `<div class="progress"><b style="width:${Math.min(100, pct)}%"></b></div>` : ''}</div>`;
+  ui.form = { kind: 'week', off };
+  openSheet(`<div class="row sheet-top"><h3>Итоги недели</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
+  <div class="row spread" style="margin-bottom:12px"><button class="icon-btn flat" data-act="weekSum" data-o="${off - 1}" aria-label="Предыдущая неделя">‹</button>
+    <b>${short(st.days[0])} – ${short(st.days[6])}</b><button class="icon-btn flat" data-act="weekSum" data-o="${off + 1}" ${off >= 0 ? 'disabled style="opacity:.3"' : ''} aria-label="Следующая неделя">›</button></div>
+  <div class="bars">${st.perDay.map((p, i) => `<div><div class="bar"><i style="height:${p.n / mx * 100}%"><u style="height:${p.n ? p.d / p.n * 100 : 0}%"></u></i></div><span>${WD[i]}</span></div>`).join('')}</div>
+  <p class="muted small" style="margin:6px 0 12px;text-align:center">Столбик: дела за день, закрашено: сделано</p>
+  ${line('Дела сделаны', `${st.done} из ${st.total}`, st.total ? st.done / st.total * 100 : 0)}
+  ${line('Тренировки', `${st.sportD} из ${st.sportT}`, st.sportT ? st.sportD / st.sportT * 100 : 0)}
+  ${line('Питание по плану', `${st.food.pct}%`, st.food.pct)}
+  ${line('Развитие', `${dur(st.learnMin)} из 7 ч, тем закрыто: ${st.learnDays}`, st.learnMin / 420 * 100)}
+  <div class="tiles" style="margin-top:14px"><div><span>Вес</span><b>${st.w.length ? ru(st.w[st.w.length - 1]) : '—'}<small> кг</small></b>${dl(st.w, true)}</div>
+    <div><span>Жир</span><b>${st.f.length ? ru(st.f[st.f.length - 1]) : '—'}<small> кг</small></b>${dl(st.f, true)}</div>
+    <div><span>Вода в день</span><b>${st.water ? ru(st.water * 0.25) : '—'}<small> л</small></b><em>цель 2,5 л</em></div></div>
+  <div class="tiles"><div><span>Шаги в день</span><b>${st.steps ? Math.round(st.steps / 100) / 10 : '—'}<small> тыс.</small></b><em>цель 8–10</em></div>
+    <div><span>Сон</span><b>${st.sleep ? ru(st.sleep) : '—'}<small> ч</small></b><em>цель от 7</em></div><div><span>Замены в еде</span><b>${st.food.repl}</b><em>за неделю</em></div></div>
+  <button class="btn ghost block" data-act="weekShare">Поделиться итогами</button>`);
 }
 
 /* ---------- Календарь ---------- */
@@ -279,7 +338,8 @@ function weekStrip() {
 }
 function viewFood() {
   const top = head(esc(state.menu.title), ui.foodView === 'menu' ? `<button class="btn sm ${ui.foodEdit ? '' : 'ghost'}" data-act="foodEdit">${ui.foodEdit ? 'Готово' : 'Изменить меню'}</button>` : '')
-    + seg('foodView', ui.foodView, [['menu', 'Меню'], ['body', 'Вес и жир'], ['plan', 'План']]);
+    + seg('foodView', ui.foodView, [['menu', 'Меню'], ['shop', 'Покупки'], ['body', 'Вес'], ['plan', 'План']]);
+  if (ui.foodView === 'shop') return top + viewShop();
   if (ui.foodView === 'body') return top + viewBody();
   if (ui.foodView === 'plan') return top + viewPlan();
   const { week, html: weekRow } = weekStrip(), ws = foodStat(week), w = wdi(ui.date);
@@ -330,6 +390,19 @@ function viewFood() {
   </div>
   <div class="actions"><button class="btn ghost" data-act="shareFood">Поделиться отчётом за день</button>
   ${rec.meals ? '<button class="btn danger" data-act="foodReset">Сбросить отметки дня</button>' : ''}</div>`;
+}
+
+function viewShop() {
+  const wk = monday(today()), done = state.shop[wk] || {}, groups = window.MENU_SHOP || [];
+  const all = groups.reduce((n, g) => n + g.items.length, 0), got = groups.reduce((n, g) => n + g.items.filter(i => done[i.id]).length, 0);
+  return `<div class="card sum">${ring(all ? got / all * 100 : 0, 64, 7, 'var(--ok)', `<b>${got}</b><small>из ${all}</small>`)}
+    <div><b>Список на неделю</b><div class="muted small">Посчитан по меню с понедельника по воскресенье. Мясо, рыба и крупы указаны в сыром и сухом виде.</div></div></div>
+  ${groups.map(g => `<h2>${g.name}</h2><div class="card">${g.items.map(i => `<label class="shop ${done[i.id] ? 'done' : ''}"><input type="checkbox" class="sm" data-ch="shop" data-id="${i.id}" ${done[i.id] ? 'checked' : ''}><span>${esc(i.name)}</span><b>${i.amt}</b></label>`).join('')}</div>`).join('')}
+  <div class="actions"><button class="btn ghost" data-act="shopShare">Поделиться списком</button>${got ? '<button class="btn danger" data-act="shopReset">Снять отметки</button>' : ''}</div>
+  <p class="muted small" style="margin:10px 4px">Если вы меняли меню вручную, список останется по рассчитанному меню.</p>`;
+}
+function shopText() {
+  return 'Покупки на неделю\n' + (window.MENU_SHOP || []).map(g => `\n${g.name}\n` + g.items.map(i => `☐ ${i.name}: ${i.amt}`).join('\n')).join('\n');
 }
 
 function chart(pts, o) {
@@ -526,7 +599,11 @@ function viewMore() {
   const sup = 'Notification' in window, perm = sup ? Notification.permission : 'unsupported';
   const permText = { granted: 'Включены', denied: 'Запрещены в настройках', default: 'Не включены', unsupported: 'Недоступны в этом браузере' }[perm];
   const open = state.cards.filter(c => c.col !== 'closed').length;
+  const le = state.settings.lastExport, stale = state.items.length > 10 && (!le || diffDays(le, today()) > 7);
   return head('Ещё') + `
+  <input class="inp search" id="q" type="search" value="${esc(ui.q)}" placeholder="Поиск по задачам, заметкам и карточкам" autocomplete="off">
+  <div id="searchOut">${searchOut()}</div>
+  ${stale ? `<div class="hint"><b>Сделайте резервную копию</b><br>Записи хранятся только в этом телефоне. ${le ? `Последняя копия была ${short(le)}.` : 'Копий ещё не было.'} <button class="btn sm" style="margin-top:8px;display:block" data-act="export">Сохранить копию</button></div>` : ''}
   <button class="card link" data-act="sub" data-v="notes"><i class="tile" style="background:#f59e0b">✎</i><span><b>Заметки и доска</b><small>Заметок: ${state.notes.length}, открытых карточек: ${open}</small></span><em>›</em></button>
   <button class="card link" data-act="sub" data-v="sec"><i class="tile" style="background:#6366f1">▦</i><span><b>Разделы</b><small>Работа, учёба, встречи, саморазвитие, спорт</small></span><em>›</em></button>
   ${isStandalone() ? '' : `<div class="hint"><b>Как поставить на айфон</b><ol class="steps"><li>Откройте этот сайт в Safari.</li><li>Нажмите «Поделиться» (квадрат со стрелкой).</li><li>Выберите «На экран «Домой»».</li></ol></div>`}
@@ -543,6 +620,17 @@ function viewMore() {
     <button class="list-btn" data-act="shareApp"><span>Поделиться ссылкой на планер</span><span class="muted">›</span></button>
   </div>
   <p class="muted small" style="margin:0 4px">Все записи хранятся только на этом устройстве. Задач: ${state.items.length}, заметок: ${state.notes.length}.</p>`;
+}
+
+function searchOut() {
+  const q = ui.q.trim().toLowerCase(); if (q.length < 2) return '';
+  const has = (...a) => a.some(x => x && String(x).toLowerCase().includes(q)), r = [];
+  for (const i of state.items) if (has(i.title, i.note, i.who, i.place)) r.push([i.date, `<button class="list-btn" data-act="edit" data-id="${i.id}"><span>${esc(i.title)}<small class="muted" style="display:block">${short(i.date)}${timeText(i) ? ' · ' + timeText(i) : ''} · ${cat(i.cat).name}${i.done ? ' · сделано' : ''}</small></span></button>`]);
+  r.sort((a, b) => b[0].localeCompare(a[0])); const out = r.slice(0, 15).map(x => x[1]);
+  for (const n of state.notes) if (has(n.title, n.text)) out.push(`<button class="list-btn" data-act="noteEdit" data-id="${n.id}"><span>${esc(n.title || 'Без названия')}<small class="muted" style="display:block">Заметка · ${cat(n.cat).name}</small></span></button>`);
+  for (const c of state.cards) if (has(c.title, c.text)) out.push(`<button class="list-btn" data-act="cardEdit" data-id="${c.id}"><span>${esc(c.title)}<small class="muted" style="display:block">Карточка · ${(COLS.find(x => x[0] === c.col) || [])[1]}</small></span></button>`);
+  PLAN.forEach((p, k) => { if (has(p[1], p[2], ...p[3].map(m => m[1]))) out.push(`<button class="list-btn" data-act="learnOpen" data-i="${k}"><span>${esc(p[1])}<small class="muted" style="display:block">Развитие · день ${k + 1}</small></span></button>`); });
+  return `<div class="card">${out.length ? out.slice(0, 30).join('') : '<div class="empty">Ничего не найдено</div>'}</div>`;
 }
 
 function render() {
@@ -582,7 +670,7 @@ function itemForm(it) {
   <label class="f">Чек-лист (каждый пункт с новой строки)<textarea id="f-subs" placeholder="Пункт 1&#10;Пункт 2">${esc((it.subs || []).map(s => s.text).join('\n'))}</textarea></label>
   <label class="f">Заметка<textarea id="f-note">${esc(it.note || '')}</textarea></label>
   <button class="btn block" data-act="saveItem">Сохранить</button>
-  ${isNew ? '' : `<div class="actions"><button class="btn ghost" data-act="ics">В Календарь iPhone</button><button class="btn ghost" data-act="shareItem">Поделиться</button><button class="btn danger" data-act="delItem">Удалить</button></div>
+  ${isNew ? '' : `<div class="actions"><button class="btn ghost" data-act="ics">В Календарь iPhone</button><button class="btn ghost" data-act="shareItem">Поделиться</button><button class="btn ghost" data-act="toTomorrow">На завтра</button><button class="btn danger" data-act="delItem">Удалить</button></div>
   ${it.series ? '<button class="btn danger block" data-act="delSeries">Удалить все будущие повторы</button>' : ''}`}`);
   if (isNew) setTimeout(() => $('#f-title') && $('#f-title').focus(), 50);
 }
@@ -772,6 +860,22 @@ const actions = {
   rep: el => { ui.form.rep = el.dataset.v; el.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); $('#repMore').hidden = el.dataset.v === 'none'; $('.wdpick').hidden = el.dataset.v !== 'days'; return false; },
   repDay: el => { const i = Number(el.dataset.i); if (ui.form.days.has(i)) ui.form.days.delete(i); else ui.form.days.add(i); el.classList.toggle('on'); return false; },
   close: () => { closeSheet(); return false; },
+  quick: () => {
+    const el = $('#quick'), v = el ? el.value.trim() : ''; if (!v) { if (el) el.focus(); return false; }
+    const m = v.match(/^(\d{1,2})[:.](\d{2})(?:\s*[-–]\s*(\d{1,2})[:.](\d{2}))?\s+(.+)$/);
+    const ok = m && +m[1] < 24 && +m[2] < 60 && (!m[3] || (+m[3] < 24 && +m[4] < 60));
+    state.items.push({ id: uid(), title: ok ? m[5] : v, type: 'task', date: today(), time: ok ? `${pad(+m[1])}:${m[2]}` : '', end: ok && m[3] ? `${pad(+m[3])}:${m[4]}` : '',
+      dur: null, who: '', cat: 'work', remind: '', place: '', note: '', subs: [], done: false });
+    save();
+  },
+  toToday: el => { const it = state.items.find(i => i.id === el.dataset.id); if (it) { it.date = today(); it.notified = false; save(); } },
+  lateAll: () => { const t = today(); lateItems().forEach(i => { i.date = t; i.notified = false; }); save(); },
+  toTomorrow: () => { const it = saveItemForm(); if (!it) return false; it.date = addDays(it.date < today() ? today() : it.date, 1); it.notified = false; save(); closeSheet(); toast(`Перенесено на ${short(it.date)}`); },
+  water: el => { const d = state.day[today()] || (state.day[today()] = {}); d.water = Math.max(0, Math.min(20, (d.water || 0) + Number(el.dataset.d))); save(); },
+  weekSum: el => { weekSheet(Number(el.dataset.o)); return false; },
+  weekShare: () => { share('Итоги недели', weekText(weekStats(addDays(monday(today()), ui.form.off * 7)))); return false; },
+  shopShare: () => { share('Покупки', shopText()); return false; },
+  shopReset: () => { delete state.shop[monday(today())]; save(); },
   saveItem: () => { if (!saveItemForm()) return false; closeSheet(); },
   delItem: () => { if (!confirm('Удалить эту запись?')) return false; state.items = state.items.filter(i => i.id !== ui.form.id); save(); closeSheet(); },
   delSeries: () => {
@@ -838,7 +942,7 @@ const actions = {
     return false;
   },
   notifTest: () => { notify('Проверка', 'Так выглядит напоминание планера', 'test'); return false; },
-  export: () => { download(new File([JSON.stringify(state, null, 1)], `planer-${today()}.json`, { type: 'application/json' })); return false; },
+  export: () => { state.settings.lastExport = today(); save(); download(new File([JSON.stringify(state, null, 1)], `planer-${today()}.json`, { type: 'application/json' })); },
   import: () => { $('#importFile').click(); return false; }
 };
 document.addEventListener('click', async e => {
@@ -875,6 +979,9 @@ const changes = {
   mName: el => { state.menu.days[wdi(ui.date)][Number(el.dataset.i)].name = el.value.trim() || 'Приём пищи'; return false; },
   mTime: el => { state.menu.days[wdi(ui.date)][Number(el.dataset.i)].time = el.value; return false; },
   mItems: el => { const m = state.menu.days[wdi(ui.date)][Number(el.dataset.i)]; m.items = lines(el.value); delete m.kcal; delete m.p; delete m.f; delete m.c; return false; },
+  steps: el => { const v = num(el.value), d = state.day[today()] || (state.day[today()] = {}); if (v > 0) d.steps = Math.round(v); else delete d.steps; return false; },
+  sleep: el => { const v = num(el.value), d = state.day[today()] || (state.day[today()] = {}); if (v > 0) d.sleep = Math.round(v * 10) / 10; else delete d.sleep; return false; },
+  shop: el => { (state.shop[monday(today())] ||= {})[el.dataset.id] = el.checked; },
   lm: el => { (state.learn.done[ui.learnDay] ||= {})[el.dataset.k] = el.checked; },
   lc: el => { const c = (state.learn.custom[ui.learnDay] || []).find(x => x.id === el.dataset.id); if (c) c.done = el.checked; }
 };
@@ -884,6 +991,9 @@ document.addEventListener('change', e => {
   const r = fn(el); save();
   if (r !== false) render();
 });
+
+document.addEventListener('input', e => { if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'quick') { e.preventDefault(); actions.quick(); render(); const q = $('#quick'); if (q) q.focus(); } });
 
 /* Перетаскивание карточек мышью (на телефоне работают кнопки под карточкой) */
 let dragId = null;
@@ -916,4 +1026,8 @@ setInterval(() => {
   const a = document.activeElement, typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox';
   if (ui.tab === 'today' && !sheet.open && !typing) render();
 }, 30000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkReminders(); if (!sheet.open) render(); } });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return; checkReminders();
+  const a = document.activeElement, typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox';
+  if (!sheet.open && !typing) render();
+});

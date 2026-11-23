@@ -299,3 +299,30 @@ ol.steps li { margin-bottom: 4px; }
   transition: .2s; z-index: 20; max-width: 86vw; text-align: center; box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
 }
 #toast.show { opacity: 1; transform: translateX(-50%); }
+
+/* Быстрый ввод, привычки, итоги недели, покупки, поиск */
+.quick { display: flex; gap: 8px; margin: 14px 0 0; }
+.quick .inp { margin: 0; background: var(--card); box-shadow: var(--shadow); }
+.quick .btn { width: 46px; padding: 0; font-size: 24px; font-weight: 400; flex: none; }
+.search { margin: 0 0 12px; background: var(--card); box-shadow: var(--shadow); }
+.item > .swap { align-self: center; flex: none; }
+.hab { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.hab small { display: block; color: var(--muted); }
+.cnt { display: flex; align-items: center; gap: 12px; }
+.cnt b { font-size: 22px; min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; }
+.cnt button { width: 40px; height: 40px; border-radius: 13px; background: var(--accent-soft); color: var(--accent); font-size: 22px; text-align: center; font-weight: 600; }
+.drops { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; margin: 12px 0 14px; }
+.drops i { height: 8px; border-radius: 4px; background: var(--line); }
+.drops i.on { background: #38bdf8; }
+.bars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; }
+.bars > div { text-align: center; font-size: 11px; color: var(--muted); font-weight: 650; }
+.bar { height: 84px; display: flex; align-items: flex-end; justify-content: center; margin-bottom: 4px; }
+.bar i { width: 100%; max-width: 30px; min-height: 4px; border-radius: 8px; background: var(--line); display: flex; align-items: flex-end; overflow: hidden; }
+.bar u { width: 100%; background: linear-gradient(180deg, var(--accent2), var(--accent)); border-radius: 8px; display: block; }
+.wk { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.wk span { color: var(--muted); } .wk .progress { margin-top: 7px; }
+.sheet-in .tiles > div { background: var(--field); box-shadow: none; }
+.shop { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.shop:last-child { border-bottom: 0; padding-bottom: 2px; } .shop:first-child { padding-top: 2px; }
+.shop span { flex: 1; } .shop b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.shop.done span, .shop.done b { color: var(--muted); text-decoration: line-through; font-weight: 500; }
