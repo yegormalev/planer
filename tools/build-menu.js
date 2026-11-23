@@ -63,12 +63,14 @@ const out = days.map(([label, meals], di) => {
   const tot = [0, 0, 0, 0];
   const ms = meals.map(([name, time, items]) => {
     const t = [0, 0, 0, 0];
+    const im = [];
     const its = items.map(([k, g]) => {
       const f = F[k]; for (let i = 0; i < 4; i++) t[i] += f[i + 1] * g / 100;
+      im.push([Math.round(f[1] * g / 100), ...[2, 3, 4].map(i => Math.round(f[i] * g / 10) / 10)]);
       return `${f[0]}, ${unit[k] ? unit[k](g) : g + ' г'}`;
     });
     for (let i = 0; i < 4; i++) tot[i] += t[i];
-    return { name, time, items: its, kcal: Math.round(t[0] / 10) * 10, p: Math.round(t[1]), f: Math.round(t[2]), c: Math.round(t[3]) };
+    return { name, time, items: its, im, kcal: Math.round(t[0] / 10) * 10, p: Math.round(t[1]), f: Math.round(t[2]), c: Math.round(t[3]) };
   });
   console.log(di, label, tot.map(Math.round).join(' / '));
   return { label, kcal: Math.round(tot[0] / 10) * 10, p: Math.round(tot[1]), f: Math.round(tot[2]), c: Math.round(tot[3]), meals: ms };

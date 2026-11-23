@@ -53,14 +53,23 @@ const plural = (n, a, b, c) => { const m = Math.abs(n) % 100, k = m % 10; return
 /* ---------- Данные ---------- */
 function buildMenu() {
   const week = window.MENU_WEEK || [];
-  return { ver: 2, title: 'План сушки', goal: '', days: week.map(d => d.meals.map(m => ({ ...m, items: m.items.slice() }))), labels: week.map(d => d.label) };
+  return { ver: 3, title: 'План сушки', goal: '', days: week.map(d => d.meals.map(m => ({ ...m, items: m.items.slice(), im: m.im ? m.im.map(x => x.slice()) : null }))), labels: week.map(d => d.label) };
+}
+function migrateMenu(m) {
+  if (!m || !m.ver || m.ver < 2) return buildMenu();
+  if (m.ver === 2) {                                       // добавляем КБЖУ по каждой позиции там, где меню не меняли
+    const g = buildMenu();
+    m.days.forEach((d, di) => d.forEach((x, mi) => { const gm = (g.days[di] || [])[mi]; if (gm && JSON.stringify(gm.items) === JSON.stringify(x.items)) x.im = gm.im; }));
+    m.ver = 3;
+  }
+  return m;
 }
 function load() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (_) { s = {}; }
   const st = {
     items: s.items || [], notes: s.notes || [], cards: s.cards || [], food: s.food || {}, body: s.body || {},
-    menu: s.menu && s.menu.ver === 2 ? s.menu : buildMenu(),
+    menu: migrateMenu(s.menu), products: s.products || {},
     learn: Object.assign({ start: today(), done: {}, custom: {}, secs: {}, timer: null }, s.learn || {}),
     seeds: s.seeds || {}, settings: s.settings || {}, day: s.day || {}, shop: s.shop || {}
   };
@@ -99,7 +108,7 @@ const byTime = (a, b) => (a.date + (a.time || '99:99')).localeCompare(b.date + (
 /* ---------- Питание ---------- */
 function templateMeals(date) {
   return (state.menu.days[wdi(date)] || []).map(m => ({
-    name: m.name, time: m.time, note: '', kcal: m.kcal, p: m.p, f: m.f, c: m.c, items: m.items.map(t => ({ text: t, eaten: false, repl: '' }))
+    name: m.name, time: m.time, note: '', kcal: m.kcal, p: m.p, f: m.f, c: m.c, items: m.items.map((t, i) => ({ text: t, eaten: false, repl: '', k: m.im ? m.im[i] : null }))
   }));
 }
 const dayMeals = date => (state.food[date] && state.food[date].meals) || templateMeals(date);
@@ -109,7 +118,7 @@ function ensureDay(date) {
   return d;
 }
 function mealStatus(m) {
-  const n = m.items.length, repl = m.items.filter(i => i.repl).length, eaten = m.items.filter(i => i.eaten && !i.repl).length;
+  const pl = m.items.filter(i => !i.extra), n = pl.length, repl = pl.filter(i => i.repl).length, eaten = pl.filter(i => i.eaten && !i.repl).length;
   if (!n) return { k: 'none', t: 'Пусто' };
   if (eaten === n) return { k: 'ok', t: 'По плану' };
   if (eaten + repl === n) return { k: 'warn', t: 'С заменой' };
@@ -118,8 +127,21 @@ function mealStatus(m) {
 }
 function foodStat(dates) {
   let total = 0, eaten = 0, repl = 0;
-  for (const d of dates) for (const m of dayMeals(d)) for (const i of m.items) { total++; if (i.repl) repl++; else if (i.eaten) eaten++; }
+  for (const d of dates) for (const m of dayMeals(d)) for (const i of m.items) { if (i.extra) continue; total++; if (i.repl) repl++; else if (i.eaten) eaten++; }
   return { total, eaten, repl, touched: eaten + repl, pct: total ? Math.round(eaten / total * 100) : 0 };
+}
+function eatenTotals(meals) {
+  const t = { kcal: 0, p: 0, f: 0, c: 0 }; let repl = 0;
+  for (const m of meals) {
+    const planned = m.items.filter(i => !i.extra).length;
+    for (const i of m.items) {
+      if (i.repl) { repl++; continue; }
+      if (!i.eaten) continue;
+      const k = i.k || (!i.extra && m.kcal && planned ? [m.kcal / planned, m.p / planned, m.f / planned, m.c / planned] : null);
+      if (k) { t.kcal += k[0]; t.p += k[1]; t.f += k[2]; t.c += k[3]; }
+    }
+  }
+  return { kcal: Math.round(t.kcal), p: Math.round(t.p), f: Math.round(t.f), c: Math.round(t.c), repl };
 }
 const dayTotals = meals => meals.reduce((s, m) => ({ kcal: s.kcal + (m.kcal || 0), p: s.p + (m.p || 0), f: s.f + (m.f || 0), c: s.c + (m.c || 0) }), { kcal: 0, p: 0, f: 0, c: 0 });
 
@@ -357,21 +379,26 @@ function viewFood() {
     <button class="btn plain" data-act="menuReset">Вернуть рассчитанное меню</button></div>`;
   }
 
-  const meals = dayMeals(ui.date), rec = state.food[ui.date] || {}, ds = foodStat([ui.date]), tot = dayTotals(meals);
+  const meals = dayMeals(ui.date), rec = state.food[ui.date] || {}, ds = foodStat([ui.date]), tot = dayTotals(meals), eat = eatenTotals(meals);
   const mealsHtml = meals.map((m, mi) => {
-    const st = mealStatus(m), allE = m.items.length && m.items.every(i => i.eaten);
+    const st = mealStatus(m), allE = m.items.length && m.items.every(i => i.eaten || i.extra) && m.items.some(i => !i.extra);
     return `<div class="card meal">
       <div class="meal-head"><input type="checkbox" data-ch="mealAll" data-m="${mi}" ${allE ? 'checked' : ''} aria-label="Съел всё">
         <div class="t">${esc(m.name)}<small>${esc(m.time || '')}${m.kcal ? ` · ${m.kcal} ккал · Б ${m.p} г` : ''}</small></div>
         <span class="badge ${st.k}">${st.t}</span></div>
       ${m.items.map((it, ii) => {
         const k = `${ui.date}|${mi}|${ii}`, open = it.repl || ui.swap.has(k);
+        if (it.extra) return `<div class="fitem"><div class="line">
+          <input type="checkbox" class="sm" data-ch="fItem" data-m="${mi}" data-i="${ii}" ${it.eaten ? 'checked' : ''}>
+          <span>${esc(it.text)}<small class="muted" style="display:block">добавлено · ${it.k ? `${Math.round(it.k[0])} ккал · Б ${ru(it.k[1])} · Ж ${ru(it.k[2])} · У ${ru(it.k[3])}` : ''}</small></span>
+          <button class="x" data-act="extraDel" data-m="${mi}" data-i="${ii}" aria-label="Удалить">×</button></div></div>`;
         return `<div class="fitem ${it.repl ? 'replaced' : ''}"><div class="line">
           <input type="checkbox" class="sm" data-ch="fItem" data-m="${mi}" data-i="${ii}" ${it.eaten ? 'checked' : ''}>
           <span>${esc(it.text)}</span>
           ${open ? '' : `<button class="swap" data-act="swap" data-k="${k}">Заменил</button>`}</div>
           ${open ? `<input class="inp inline" data-ch="fRepl" data-m="${mi}" data-i="${ii}" value="${esc(it.repl)}" placeholder="На что заменил">` : ''}</div>`;
       }).join('')}
+      <button class="btn sm ghost scanb" data-act="prodAdd" data-m="${mi}">＋ Продукт или штрихкод</button>
       <input class="inp inline" data-ch="mNote" data-m="${mi}" value="${esc(m.note)}" placeholder="Комментарий: что не съел и почему">
     </div>`;
   }).join('');
@@ -380,9 +407,12 @@ function viewFood() {
   <div class="card sum">${ring(ds.pct, 64, 7, 'var(--ok)', `<b>${ds.pct}%</b>`)}
     <div><b>${human(ui.date)}</b>
       <div class="muted small">${esc((state.menu.labels || [])[w] || '')}</div>
-      ${tot.kcal ? `<div class="macro"><span><b>${tot.kcal}</b> ккал</span><span>Б <b>${tot.p}</b></span><span>Ж <b>${tot.f}</b></span><span>У <b>${tot.c}</b></span></div>` : ''}
       <div class="muted small">За неделю по плану ${ws.eaten} из ${ws.total} позиций, замен: ${ws.repl}</div></div>
   </div>
+  ${tot.kcal ? `<div class="card eat"><div class="row spread"><span class="muted">Съедено за день</span><b>${eat.kcal} <small class="muted">из ${tot.kcal} ккал</small></b></div>
+    <div class="progress ${eat.kcal > tot.kcal * 1.05 ? 'over' : ''}"><b style="width:${Math.min(100, eat.kcal / tot.kcal * 100)}%"></b></div>
+    <div class="mac3">${[['Белки', eat.p, tot.p], ['Жиры', eat.f, tot.f], ['Углеводы', eat.c, tot.c]].map(([n, a, b]) => `<div><span>${n}</span><b>${a}<small> / ${b} г</small></b></div>`).join('')}</div>
+    ${eat.repl ? `<div class="muted small" style="margin-top:8px">Замены без штрихкода не посчитаны: ${eat.repl}. Чтобы учесть, добавьте продукт кнопкой «＋ Продукт».</div>` : ''}</div>` : ''}
   ${mealsHtml || '<div class="card"><div class="empty">На этот день меню не задано. Нажмите «Изменить меню», чтобы составить.</div></div>'}
   <div class="card">
     <label class="f">Тренировка<select data-ch="train">${['', 'Была', 'Не было', 'День отдыха'].map(o => `<option ${rec.train === o ? 'selected' : ''}>${o}</option>`).join('')}</select></label>
@@ -646,7 +676,7 @@ const sheet = $('#sheet');
 function openSheet(html) { sheet.innerHTML = `<div class="grab"></div><div class="sheet-in">${html}</div>`; if (!sheet.open) sheet.showModal(); sheet.scrollTop = 0; }
 function closeSheet() { if (sheet.open) sheet.close(); ui.form = null; }
 sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
-sheet.addEventListener('close', () => { ui.form = null; });
+sheet.addEventListener('close', () => { ui.form = null; stopScan(); });
 const catSelect = (id, cur) => `<select id="${id}">${CATS.map(c => `<option value="${c.id}" ${c.id === (cur || 'work') ? 'selected' : ''}>${c.name}</option>`).join('')}</select>`;
 
 function itemForm(it) {
@@ -742,6 +772,113 @@ function saveCardForm() {
   const i = state.cards.findIndex(x => x.id === c.id);
   if (i >= 0) state.cards[i] = c; else state.cards.push(c);
   save(); return c;
+}
+
+/* ---------- Продукты и сканер штрихкода ---------- */
+const READERS = ['ean_reader', 'ean_8_reader', 'upc_reader'];
+let scanOn = false, lastCode = '', lastHits = 0;
+function eanOk(c) {
+  if (!/^(\d{8}|\d{12}|\d{13})$/.test(c)) return false;
+  const d = c.split('').map(Number), chk = d.pop(); let sum = 0;
+  d.reverse().forEach((x, i) => { sum += x * (i % 2 ? 1 : 3); });
+  return (10 - sum % 10) % 10 === chk;
+}
+function loadQuagga() {
+  if (window.Quagga) return Promise.resolve();
+  return new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'vendor/quagga.min.js'; s.onload = ok; s.onerror = () => no(new Error('load')); document.head.appendChild(s); });
+}
+function stopScan() {
+  if (!scanOn) return; scanOn = false;
+  try { window.Quagga.offDetected(); window.Quagga.stop(); } catch (_) { /* камера уже остановлена */ }
+}
+function prodSheet(mi) {
+  stopScan();
+  const meal = dayMeals(ui.date)[mi]; ui.form = { kind: 'prod', mi };
+  const recent = Object.entries(state.products).sort((a, b) => (b[1].used || 0) - (a[1].used || 0)).slice(0, 12);
+  openSheet(`<div class="row sheet-top"><h3>Добавить продукт</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
+  <p class="muted small" style="margin:-6px 0 12px">Приём пищи: ${esc(meal ? meal.name : '')}</p>
+  <button class="btn block" data-act="scanStart">Сканировать штрихкод камерой</button>
+  <div class="quick" style="margin:10px 0"><input id="bc" class="inp" style="background:var(--field);box-shadow:none" inputmode="numeric" placeholder="или цифры под штрихкодом" autocomplete="off"><button class="btn plain" style="width:auto;padding:0 16px;font-size:15px;font-weight:650" data-act="bcFind">Найти</button></div>
+  <button class="btn ghost block" data-act="prodManual">Ввести продукт вручную</button>
+  ${recent.length ? `<div class="lbl">Недавние продукты</div>${recent.map(([code, p]) => `<button class="list-btn" data-act="prodPick" data-code="${esc(code)}"><span>${esc(p.name)}<small class="muted" style="display:block">${Math.round(p.kcal)} ккал · Б ${ru(p.p)} · Ж ${ru(p.f)} · У ${ru(p.c)} на 100 г</small></span><span class="muted">›</span></button>`).join('')}` : ''}
+  <p class="muted small" style="margin:14px 0 0">Данные о продуктах берутся из открытой базы Open Food Facts. Если продукта там нет, введите КБЖУ с упаковки один раз, планер его запомнит.</p>`);
+}
+function scanSheet() {
+  const mi = ui.form.mi; ui.form = { kind: 'scan', mi };
+  openSheet(`<div class="row sheet-top"><h3>Наведите на штрихкод</h3><button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button></div>
+  <div id="cam" class="cam"><div class="cam-msg">Включаю камеру…</div></div>
+  <p class="muted small" style="margin:10px 0">Держите телефон в 10–15 см от упаковки, штрихкод целиком в кадре и без бликов.</p>
+  <label class="btn plain block">Не считывается? Сфотографировать<input type="file" id="bcPhoto" accept="image/*" capture="environment" hidden></label>`);
+  loadQuagga().then(() => {
+    if (!ui.form || ui.form.kind !== 'scan') return;
+    window.Quagga.init({
+      inputStream: { name: 'Live', type: 'LiveStream', target: $('#cam'), constraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
+      locator: { patchSize: 'medium', halfSample: true }, numOfWorkers: 0, frequency: 10, locate: true, decoder: { readers: READERS }
+    }, err => {
+      const msg = $('.cam-msg');
+      if (err) { if (msg) msg.textContent = 'Нет доступа к камере. Разрешите камеру в настройках или введите цифры штрихкода вручную.'; return; }
+      if (!ui.form || ui.form.kind !== 'scan') { try { window.Quagga.stop(); } catch (_) { /* уже остановлена */ } return; }
+      if (msg) msg.remove();
+      scanOn = true; lastCode = ''; lastHits = 0; window.Quagga.start();
+      window.Quagga.onDetected(r => {
+        const c = r && r.codeResult && r.codeResult.code; if (!c || !eanOk(c)) return;
+        if (c === lastCode) lastHits++; else { lastCode = c; lastHits = 1; }
+        if (lastHits >= 2) { stopScan(); if (navigator.vibrate) navigator.vibrate(60); lookup(c, mi); }
+      });
+    });
+  }).catch(() => { const msg = $('.cam-msg'); if (msg) msg.textContent = 'Сканер не загрузился. Проверьте интернет или введите цифры штрихкода вручную.'; });
+}
+function decodePhoto(file, mi) {
+  const url = URL.createObjectURL(file); toast('Ищу штрихкод на фото…');
+  loadQuagga().then(() => window.Quagga.decodeSingle({ src: url, numOfWorkers: 0, inputStream: { size: 1280 }, locate: true, decoder: { readers: READERS } }, r => {
+    URL.revokeObjectURL(url);
+    const c = r && r.codeResult && r.codeResult.code;
+    if (c && eanOk(c)) { stopScan(); lookup(c, mi); } else toast('На фото штрихкод не найден. Попробуйте ближе и ровнее.');
+  })).catch(() => toast('Сканер не загрузился'));
+}
+async function lookup(code, mi) {
+  if (state.products[code]) { productSheet(mi, code, state.products[code]); return; }
+  ui.form = { kind: 'wait', mi };
+  openSheet(`<div class="row sheet-top"><h3>Ищу продукт…</h3><button class="btn sm plain" data-act="close">Закрыть</button></div><div class="empty">Штрихкод ${esc(code)}</div>`);
+  let p = null, note = '';
+  try {
+    const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 9000);
+    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,product_name_ru,brands,serving_quantity,nutriments`, { signal: ctl.signal });
+    clearTimeout(tm);
+    const j = await res.json().catch(() => null), pr = j && j.product, n = pr && pr.nutriments;
+    if (pr) {
+      const kcal = n ? (n['energy-kcal_100g'] != null ? Number(n['energy-kcal_100g']) : n.energy_100g != null ? Number(n.energy_100g) / 4.184 : null) : null;
+      const name = [pr.product_name_ru || pr.product_name, pr.brands ? String(pr.brands).split(',')[0].trim() : ''].filter(Boolean).join(', ');
+      p = { name, kcal, p: n ? Number(n.proteins_100g) || 0 : 0, f: n ? Number(n.fat_100g) || 0 : 0, c: n ? Number(n.carbohydrates_100g) || 0 : 0, g: Number(pr.serving_quantity) || 100 };
+      if (kcal == null || !isFinite(kcal)) { p.kcal = ''; note = 'Продукт в базе есть, но без КБЖУ. Введите цифры с упаковки, планер их запомнит.'; }
+      else note = 'Найдено в Open Food Facts. Сверьте цифры с упаковкой: базу заполняют пользователи.';
+    } else note = 'В базе такого продукта нет. Введите название и КБЖУ с упаковки, планер запомнит этот штрихкод.';
+  } catch (_) { note = 'Не удалось связаться с базой продуктов. Введите КБЖУ с упаковки, планер запомнит этот штрихкод.'; }
+  if (!ui.form || ui.form.kind !== 'wait') return;           // шторку уже закрыли
+  productSheet(mi, code, p || { name: '', kcal: '', p: '', f: '', c: '', g: 100 }, note);
+}
+function productSheet(mi, code, p, note) {
+  stopScan();
+  const meal = dayMeals(ui.date)[mi]; ui.form = { kind: 'prodEdit', mi, code: code || '' };
+  const v = x => x === '' || x == null ? '' : ru(x);
+  openSheet(`<div class="row sheet-top"><h3>Продукт</h3><button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button></div>
+  ${note ? `<div class="hint">${note}</div>` : ''}
+  <label class="f">Название<input id="p-name" value="${esc(p.name || '')}" placeholder="Например: йогурт греческий" autocomplete="off"></label>
+  <div class="lbl" style="margin-top:0">На 100 г продукта${code ? ` · штрихкод ${esc(code)}` : ''}</div>
+  <div class="four"><label class="f">Ккал<input id="p-kcal" inputmode="decimal" value="${v(p.kcal === '' ? '' : Math.round(p.kcal))}"></label><label class="f">Белки<input id="p-p" inputmode="decimal" value="${v(p.p)}"></label>
+  <label class="f">Жиры<input id="p-f" inputmode="decimal" value="${v(p.f)}"></label><label class="f">Углев.<input id="p-c" inputmode="decimal" value="${v(p.c)}"></label></div>
+  <label class="f">Сколько съел, граммов<input id="p-g" inputmode="decimal" value="${v(p.g || 100)}"></label>
+  <div class="card" style="background:var(--field);box-shadow:none"><div class="muted small">В этой порции</div><div class="macro" id="p-out" style="font-size:15px;margin-bottom:0"></div></div>
+  <button class="btn block" data-act="prodSave">Добавить в «${esc(meal ? meal.name : 'приём пищи')}»</button>`);
+  prodCalc();
+}
+function prodRead() {
+  const g = num($('#p-g').value) || 0, k = ['kcal', 'p', 'f', 'c'].map(x => num($('#p-' + x).value) || 0);
+  return { name: $('#p-name').value.trim(), g, per: k, tot: k.map(x => x * g / 100) };
+}
+function prodCalc() {
+  const o = $('#p-out'); if (!o) return; const r = prodRead();
+  o.innerHTML = `<span><b>${Math.round(r.tot[0])}</b> ккал</span><span>Б <b>${ru(r.tot[1])}</b></span><span>Ж <b>${ru(r.tot[2])}</b></span><span>У <b>${ru(r.tot[3])}</b></span>`;
 }
 
 /* ---------- Поделиться, экспорт ---------- */
@@ -899,6 +1036,21 @@ const actions = {
   cardMove: el => { const c = state.cards.find(x => x.id === el.dataset.id); if (!c) return false; const i = COLS.findIndex(x => x[0] === c.col) + Number(el.dataset.d); if (COLS[i]) { c.col = COLS[i][0]; save(); } },
   cardPlan: () => { const c = saveCardForm(); if (!c) return false; closeSheet(); itemForm({ title: c.title, note: c.text, cat: c.cat, date: c.due || today() }); return false; },
   foodEdit: () => { ui.foodEdit = !ui.foodEdit; },
+  prodAdd: el => { prodSheet(Number(el.dataset.m)); return false; },
+  scanStart: () => { scanSheet(); return false; },
+  bcFind: () => { const c = $('#bc').value.replace(/\D/g, ''); if (!eanOk(c)) { toast('Проверьте цифры: в штрихкоде их 8, 12 или 13'); return false; } lookup(c, ui.form.mi); return false; },
+  prodManual: () => { productSheet(ui.form.mi, '', { name: '', kcal: '', p: '', f: '', c: '', g: 100 }); return false; },
+  prodPick: el => { const p = state.products[el.dataset.code]; if (p) productSheet(ui.form.mi, /^\d+$/.test(el.dataset.code) ? el.dataset.code : '', p); ui.form.code = el.dataset.code; return false; },
+  prodSave: () => {
+    const r = prodRead(), f = ui.form;
+    if (!r.name) { toast('Введите название'); $('#p-name').focus(); return false; }
+    if (!r.per[0] && !r.per[1] && !r.per[2] && !r.per[3]) { toast('Введите КБЖУ на 100 г'); $('#p-kcal').focus(); return false; }
+    if (r.g <= 0) { toast('Введите граммы'); $('#p-g').focus(); return false; }
+    state.products[f.code || 'm' + uid()] = { name: r.name, kcal: r.per[0], p: r.per[1], f: r.per[2], c: r.per[3], g: r.g, used: Date.now() };
+    ensureDay(ui.date).meals[f.mi].items.push({ text: `${r.name}, ${ru(r.g)} г`, eaten: true, repl: '', extra: true, k: [Math.round(r.tot[0]), ...r.tot.slice(1).map(x => Math.round(x * 10) / 10)] });
+    save(); closeSheet(); toast('Продукт добавлен');
+  },
+  extraDel: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items.splice(Number(el.dataset.i), 1); save(); },
   swap: el => { ui.swap.add(el.dataset.k); render(); const [, m, i] = el.dataset.k.split('|'); const inp = document.querySelector(`[data-ch="fRepl"][data-m="${m}"][data-i="${i}"]`); if (inp) inp.focus(); return false; },
   mealAdd: () => { (state.menu.days[wdi(ui.date)] ||= []).push({ name: 'Приём пищи', time: '', items: [] }); save(); },
   mealDel: el => { if (!confirm('Удалить приём пищи из меню?')) return false; state.menu.days[wdi(ui.date)].splice(Number(el.dataset.i), 1); save(); },
@@ -966,7 +1118,7 @@ const changes = {
     it.subs[Number(el.dataset.i)].done = el.checked;
     if (it.subs.every(s => s.done)) it.done = true; else if (!el.checked) it.done = false;
   },
-  mealAll: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items.forEach(i => i.eaten = el.checked); },
+  mealAll: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items.forEach(i => { if (!i.extra) i.eaten = el.checked; }); },
   fItem: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items[Number(el.dataset.i)].eaten = el.checked; },
   // Текстовые поля сохраняем без перерисовки, чтобы не сбивать фокус на телефоне
   fRepl: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items[Number(el.dataset.i)].repl = el.value.trim(); return false; },
@@ -978,7 +1130,7 @@ const changes = {
   menuGoal: el => { state.menu.goal = el.value.trim(); return false; },
   mName: el => { state.menu.days[wdi(ui.date)][Number(el.dataset.i)].name = el.value.trim() || 'Приём пищи'; return false; },
   mTime: el => { state.menu.days[wdi(ui.date)][Number(el.dataset.i)].time = el.value; return false; },
-  mItems: el => { const m = state.menu.days[wdi(ui.date)][Number(el.dataset.i)]; m.items = lines(el.value); delete m.kcal; delete m.p; delete m.f; delete m.c; return false; },
+  mItems: el => { const m = state.menu.days[wdi(ui.date)][Number(el.dataset.i)]; m.items = lines(el.value); delete m.im; delete m.kcal; delete m.p; delete m.f; delete m.c; return false; },
   steps: el => { const v = num(el.value), d = state.day[today()] || (state.day[today()] = {}); if (v > 0) d.steps = Math.round(v); else delete d.steps; return false; },
   sleep: el => { const v = num(el.value), d = state.day[today()] || (state.day[today()] = {}); if (v > 0) d.sleep = Math.round(v * 10) / 10; else delete d.sleep; return false; },
   shop: el => { (state.shop[monday(today())] ||= {})[el.dataset.id] = el.checked; },
@@ -992,7 +1144,7 @@ document.addEventListener('change', e => {
   if (r !== false) render();
 });
 
-document.addEventListener('input', e => { if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
+document.addEventListener('input', e => { if (/^p-(kcal|p|f|c|g)$/.test(e.target.id)) prodCalc(); if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'quick') { e.preventDefault(); actions.quick(); render(); const q = $('#quick'); if (q) q.focus(); } });
 
 /* Перетаскивание карточек мышью (на телефоне работают кнопки под карточкой) */
@@ -1005,6 +1157,7 @@ document.addEventListener('drop', e => {
   const c = state.cards.find(x => x.id === dragId); dragId = null; if (c) { c.col = col.dataset.col; save(); render(); }
 });
 
+document.addEventListener('change', e => { if (e.target.id === 'bcPhoto' && e.target.files[0]) decodePhoto(e.target.files[0], ui.form.mi); });
 $('#importFile').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
