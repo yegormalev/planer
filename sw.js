@@ -1,5 +1,5 @@
 // Сервис-воркер: работа офлайн и показ уведомлений.
-const CACHE = 'planer-v7';
+const CACHE = 'planer-v8';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'menu-data.js', 'learn-data.js', 'vendor/quagga.min.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 

@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 7;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 8;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -119,7 +119,8 @@ function ensureDay(date) {
   return d;
 }
 function mealStatus(m) {
-  const pl = m.items.filter(i => !i.extra), n = pl.length, repl = pl.filter(i => i.repl).length, eaten = pl.filter(i => i.eaten && !i.repl).length;
+  const pl = m.items;                                      // все блюда приёма пищи, включая добавленные
+  const n = pl.length, repl = pl.filter(i => i.repl).length, eaten = pl.filter(i => i.eaten && !i.repl).length;
   if (!n) return { k: 'none', t: 'Пусто' };
   if (eaten === n) return { k: 'ok', t: 'По плану' };
   if (eaten + repl === n) return { k: 'warn', t: 'С заменой' };
@@ -128,7 +129,7 @@ function mealStatus(m) {
 }
 function foodStat(dates) {
   let total = 0, eaten = 0, repl = 0;
-  for (const d of dates) for (const m of dayMeals(d)) for (const i of m.items) { if (i.extra) continue; total++; if (i.repl) repl++; else if (i.eaten) eaten++; }
+  for (const d of dates) for (const m of dayMeals(d)) { const own = m.items.some(i => !i.extra); for (const i of m.items) { if (i.extra && own) continue; total++; if (i.repl) repl++; else if (i.eaten) eaten++; } }
   return { total, eaten, repl, touched: eaten + repl, pct: total ? Math.round(eaten / total * 100) : 0 };
 }
 function eatenTotals(meals) {
@@ -387,7 +388,7 @@ function viewFood() {
 
   const meals = dayMeals(ui.date), rec = state.food[ui.date] || {}, ds = foodStat([ui.date]), tot = dayTotals(meals), eat = eatenTotals(meals);
   const mealsHtml = meals.map((m, mi) => {
-    const st = mealStatus(m), mt = mealTot(m), allE = m.items.length && m.items.every(i => i.eaten || i.extra) && m.items.some(i => !i.extra);
+    const st = mealStatus(m), mt = mealTot(m), allE = m.items.length > 0 && m.items.every(i => i.eaten || i.repl);
     return `<div class="card meal">
       <div class="meal-head"><input type="checkbox" data-ch="mealAll" data-m="${mi}" ${allE ? 'checked' : ''} aria-label="Съел всё">
         <div class="t">${esc(m.name)}<small>${esc(m.time || '')}${mt.kcal ? ` · ${mt.kcal} ккал · Б ${mt.p} г` : ''}</small></div>
@@ -1168,7 +1169,7 @@ const changes = {
     it.subs[Number(el.dataset.i)].done = el.checked;
     if (it.subs.every(s => s.done)) it.done = true; else if (!el.checked) it.done = false;
   },
-  mealAll: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items.forEach(i => { if (!i.extra) i.eaten = el.checked; }); },
+  mealAll: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items.forEach(i => { i.eaten = el.checked; }); },
   fItem: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items[Number(el.dataset.i)].eaten = el.checked; },
   // Текстовые поля сохраняем без перерисовки, чтобы не сбивать фокус на телефоне
   fRepl: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items[Number(el.dataset.i)].repl = el.value.trim(); return false; },
