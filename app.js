@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 8;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 9;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -783,21 +783,28 @@ function saveCardForm() {
 }
 
 /* ---------- Продукты и сканер штрихкода ---------- */
-const READERS = ['ean_reader', 'ean_8_reader', 'upc_reader'];
-let scanOn = false, lastCode = '', lastHits = 0;
+const FORMATS = ['EAN13', 'EAN8', 'UPCA', 'UPCE', 'QRCode', 'DataMatrix', 'Code128'];
+const ZX_OPTS = { formats: FORMATS, tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, maxNumberOfSymbols: 1 };
+const NO_PROD = { name: '', kcal: '', p: '', f: '', c: '', g: 100 };
+let scan = null, zxReady = null;
 function eanOk(c) {
   if (!/^(\d{8}|\d{12}|\d{13})$/.test(c)) return false;
   const d = c.split('').map(Number), chk = d.pop(); let sum = 0;
   d.reverse().forEach((x, i) => { sum += x * (i % 2 ? 1 : 3); });
   return (10 - sum % 10) % 10 === chk;
 }
-function loadQuagga() {
-  if (window.Quagga) return Promise.resolve();
-  return new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'vendor/quagga.min.js'; s.onload = ok; s.onerror = () => no(new Error('load')); document.head.appendChild(s); });
+function loadZX() {
+  if (zxReady) return zxReady;
+  zxReady = new Promise((ok, no) => {
+    const s = document.createElement('script'); s.src = 'vendor/zxing-reader.js'; s.onload = ok; s.onerror = () => no(new Error('load')); document.head.appendChild(s);
+  }).then(() => window.ZXingWASM.prepareZXingModule({ overrides: { locateFile: (p, pre) => p.endsWith('.wasm') ? 'vendor/zxing_reader.wasm' : pre + p }, fireImmediately: true }));
+  zxReady.catch(() => { zxReady = null; });
+  return zxReady;
 }
 function stopScan() {
-  if (!scanOn) return; scanOn = false;
-  try { window.Quagga.offDetected(); window.Quagga.stop(); } catch (_) { /* камера уже остановлена */ }
+  if (!scan) return; const s = scan; scan = null;
+  clearTimeout(s.timer); clearTimeout(s.hint);
+  if (s.stream) s.stream.getTracks().forEach(t => t.stop());
 }
 function prodSheet(mi) {
   stopScan();
@@ -805,49 +812,112 @@ function prodSheet(mi) {
   const recent = Object.entries(state.products).sort((a, b) => (b[1].used || 0) - (a[1].used || 0)).slice(0, 12);
   openSheet(`<div class="row sheet-top"><h3>Добавить продукт</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
   <p class="muted small" style="margin:-6px 0 12px">Приём пищи: ${esc(meal ? meal.name : '')}</p>
-  <button class="btn block" data-act="scanStart">Сканировать штрихкод камерой</button>
+  <button class="btn block" data-act="scanStart">Сканировать код камерой</button>
   <div class="quick" style="margin:10px 0"><input id="bc" class="inp" style="background:var(--field);box-shadow:none" inputmode="numeric" placeholder="или цифры под штрихкодом" autocomplete="off"><button class="btn plain" style="width:auto;padding:0 16px;font-size:15px;font-weight:650" data-act="bcFind">Найти</button></div>
   <button class="btn ghost block" data-act="prodManual">Ввести продукт вручную</button>
   ${recent.length ? `<div class="lbl">Недавние продукты</div>${recent.map(([code, p]) => `<button class="list-btn" data-act="prodPick" data-code="${esc(code)}"><span>${esc(p.name)}<small class="muted" style="display:block">${Math.round(p.kcal)} ккал · Б ${ru(p.p)} · Ж ${ru(p.f)} · У ${ru(p.c)} на 100 г</small></span><span class="muted">›</span></button>`).join('')}` : ''}
-  <p class="muted small" style="margin:14px 0 0">Данные о продуктах берутся из открытой базы Open Food Facts. Если продукта там нет, введите КБЖУ с упаковки один раз, планер его запомнит.</p>`);
+  <p class="muted small" style="margin:14px 0 0">Лучше всего читается полосатый штрихкод с цифрами. Данные берутся из открытой базы Open Food Facts. Если продукта там нет, введите КБЖУ с упаковки один раз, планер его запомнит.</p>`);
 }
-function scanSheet() {
+function scanStatus(id, text, cls) { const el = $('#' + id); if (el) { el.className = 'scanst ' + (cls || ''); el.querySelector('span').textContent = text; } }
+const scanSteps = (a, b, c) => `<div class="scansts">${[['st-cam', 'Камера', a], ['st-code', 'Код', b], ['st-db', 'База продуктов', c]].map(([id, t, v], i) =>
+  `<div id="${id}" class="scanst ${v ? v[1] : ''}"><b>${i + 1}. ${t}</b><span>${v ? esc(v[0]) : 'ждёт'}</span></div>`).join('')}</div>`;
+function camError(e) {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'Нет разрешения на камеру. Откройте Настройки айфона, найдите Safari (или «Планер»), пункт «Камера» и выберите «Разрешить», затем откройте сканер снова.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'Камера не найдена на этом устройстве.';
+  if (n === 'NotReadableError' || n === 'AbortError') return 'Камера занята другим приложением. Закройте его и откройте сканер снова.';
+  if (n === 'nosupport') return 'Этот браузер не даёт сайту камеру. Откройте планер в Safari или с иконки на экране «Домой».';
+  return 'Камера не включилась' + (n ? ' (' + n + ')' : '') + '. Сфотографируйте код кнопкой ниже.';
+}
+async function scanSheet() {
+  stopScan();
   const mi = ui.form.mi; ui.form = { kind: 'scan', mi };
-  openSheet(`<div class="row sheet-top"><h3>Наведите на штрихкод</h3><button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button></div>
-  <div id="cam" class="cam"><div class="cam-msg">Включаю камеру…</div></div>
-  <p class="muted small" style="margin:10px 0">Держите телефон в 10–15 см от упаковки, штрихкод целиком в кадре и без бликов.</p>
-  <label class="btn plain block">Не считывается? Сфотографировать<input type="file" id="bcPhoto" accept="image/*" capture="environment" hidden></label>`);
-  loadQuagga().then(() => {
-    if (!ui.form || ui.form.kind !== 'scan') return;
-    window.Quagga.init({
-      inputStream: { name: 'Live', type: 'LiveStream', target: $('#cam'), constraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
-      locator: { patchSize: 'medium', halfSample: true }, numOfWorkers: 0, frequency: 10, locate: true, decoder: { readers: READERS }
-    }, err => {
-      const msg = $('.cam-msg');
-      if (err) { if (msg) msg.textContent = 'Нет доступа к камере. Разрешите камеру в настройках или введите цифры штрихкода вручную.'; return; }
-      if (!ui.form || ui.form.kind !== 'scan') { try { window.Quagga.stop(); } catch (_) { /* уже остановлена */ } return; }
-      if (msg) msg.remove();
-      scanOn = true; lastCode = ''; lastHits = 0; window.Quagga.start();
-      window.Quagga.onDetected(r => {
-        const c = r && r.codeResult && r.codeResult.code; if (!c || !eanOk(c)) return;
-        if (c === lastCode) lastHits++; else { lastCode = c; lastHits = 1; }
-        if (lastHits >= 2) { stopScan(); if (navigator.vibrate) navigator.vibrate(60); lookup(c, mi); }
-      });
-    });
-  }).catch(() => { const msg = $('.cam-msg'); if (msg) msg.textContent = 'Сканер не загрузился. Проверьте интернет или введите цифры штрихкода вручную.'; });
+  openSheet(`<div class="row sheet-top"><h3>Наведите на код</h3><button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button></div>
+  <div id="cam" class="cam"><video id="camv" playsinline muted autoplay></video><div class="cam-msg">Включаю камеру…</div></div>
+  ${scanSteps(['включаю…', 'run'])}
+  <p class="muted small" id="scan-hint" style="margin:10px 0">Держите телефон в 15–25 см от упаковки, чтобы картинка была резкой. Подходит полосатый штрихкод, QR и Data Matrix.</p>
+  <label class="btn plain block">Сфотографировать код<input type="file" id="bcPhoto" accept="image/*" capture="environment" hidden></label>
+  <button class="btn ghost block" style="margin-top:8px" data-act="prodManual">Ввести КБЖУ вручную</button>`);
+  const me = scan = { stream: null, timer: 0, hint: 0 }, alive = () => scan === me && ui.form && ui.form.kind === 'scan';
+  const fail = (id, text) => { scanStatus(id, 'ошибка', 'bad'); const m = $('.cam-msg'); if (m) m.textContent = text; else { const c = $('#cam'); if (c) c.insertAdjacentHTML('beforeend', `<div class="cam-msg">${esc(text)}</div>`); } };
+  const zx = loadZX(); zx.catch(() => {});
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw { name: 'nosupport' };
+    me.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+  } catch (e) { if (alive()) fail('st-cam', camError(e)); return; }
+  if (!alive()) { me.stream.getTracks().forEach(t => t.stop()); return; }
+  const v = $('#camv'); v.srcObject = me.stream;
+  try { await v.play(); } catch (_) { /* Safari запустит видео сам благодаря autoplay */ }
+  try {                                                       // небольшое приближение: мелкий код читается с расстояния, где камера держит резкость
+    const tr = me.stream.getVideoTracks()[0], cap = tr.getCapabilities ? tr.getCapabilities() : {};
+    if (cap.zoom && cap.zoom.max >= 2) await tr.applyConstraints({ advanced: [{ zoom: Math.max(cap.zoom.min || 1, 2) }] });
+  } catch (_) { /* приближение не поддерживается */ }
+  if (!alive()) return;
+  const m = $('.cam-msg'); if (m) m.remove();
+  scanStatus('st-cam', 'работает', 'ok'); scanStatus('st-code', 'загружаю распознавание…', 'run');
+  try { await zx; } catch (_) { if (alive()) { scanStatus('st-code', 'ошибка', 'bad'); const h = $('#scan-hint'); if (h) h.textContent = 'Распознавание не загрузилось. Проверьте интернет и откройте сканер снова или введите цифры под штрихкодом.'; } return; }
+  if (!alive()) return;
+  scanStatus('st-code', 'ищу код в кадре…', 'run');
+  me.hint = setTimeout(() => { if (!alive()) return; scanStatus('st-code', 'пока не вижу код', 'run'); const h = $('#scan-hint'); if (h) h.innerHTML = '<b>Код пока не читается.</b> Отодвиньте телефон на 20–30 см, разгладьте упаковку и уберите блики. Если не выходит, нажмите «Сфотографировать код» или введите КБЖУ вручную.'; }, 9000);
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
+  let n = 0;
+  const loop = async () => {
+    if (!alive()) return;
+    const w = v.videoWidth, h = v.videoHeight;
+    if (w && h) {
+      const full = n++ % 3 === 2, k = full ? 1 : 0.6, sw = Math.round(w * k), sh = Math.round(h * k);   // чаще смотрим центр кадра, раз в три кадра весь кадр
+      const sc = Math.min(1, 1280 / Math.max(sw, sh)); cv.width = Math.round(sw * sc); cv.height = Math.round(sh * sc);
+      ctx.drawImage(v, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, cv.width, cv.height);
+      try {
+        const res = await window.ZXingWASM.readBarcodes(ctx.getImageData(0, 0, cv.width, cv.height), ZX_OPTS);
+        const r = res.find(x => x.isValid !== false && x.text);
+        if (r && alive()) { stopScan(); if (navigator.vibrate) navigator.vibrate(60); handleCode(r, mi); return; }
+      } catch (_) { /* кадр не разобрался, берём следующий */ }
+    }
+    if (alive()) me.timer = setTimeout(loop, 120);
+  };
+  loop();
 }
-function decodePhoto(file, mi) {
-  const url = URL.createObjectURL(file); toast('Ищу штрихкод на фото…');
-  loadQuagga().then(() => window.Quagga.decodeSingle({ src: url, numOfWorkers: 0, inputStream: { size: 1280 }, locate: true, decoder: { readers: READERS } }, r => {
-    URL.revokeObjectURL(url);
-    const c = r && r.codeResult && r.codeResult.code;
-    if (c && eanOk(c)) { stopScan(); lookup(c, mi); } else toast('На фото штрихкод не найден. Попробуйте ближе и ровнее.');
-  })).catch(() => toast('Сканер не загрузился'));
+async function decodePhoto(file, mi) {
+  toast('Ищу код на фото…');
+  try {
+    await loadZX();
+    const bmp = await createImageBitmap(file), sc = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * sc); cv.height = Math.round(bmp.height * sc);
+    const ctx = cv.getContext('2d'); ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+    const res = await window.ZXingWASM.readBarcodes(ctx.getImageData(0, 0, cv.width, cv.height), ZX_OPTS);
+    const r = res.find(x => x.isValid !== false && x.text);
+    if (r) { stopScan(); handleCode(r, mi); } else { scanStatus('st-code', 'на фото кода нет', 'bad'); toast('На фото код не найден. Снимите его крупнее, резко и без бликов.'); }
+  } catch (_) { toast('Не получилось прочитать фото. Введите цифры под штрихкодом.'); }
 }
-async function lookup(code, mi) {
-  if (state.products[code]) { productSheet(mi, code, state.products[code]); return; }
+// Разбор прочитанного: обычный штрихкод ищем сразу, из Data Matrix, QR и Code 128 достаём номер товара (GTIN), если он там есть.
+function handleCode(r, mi) {
+  const f = String(r.format || '').replace(/[^a-z0-9]/gi, '').toUpperCase(), t = String(r.text || '').trim();
+  const kind = f.startsWith('QR') ? 'QR-код' : f === 'DATAMATRIX' ? 'Data Matrix' : f === 'CODE128' ? 'код Code 128' : 'штрихкод';
+  let code = '';
+  if (/^(EAN|UPC)/.test(f)) { const d = t.replace(/\D/g, ''); code = f === 'UPCE' ? '' : d; if (!eanOk(code)) code = ''; }
+  if (!code) {
+    const g = t.match(/^(?:\]\w\d)?[\x1d\s]*\(?01\)?(\d{14})/) || t.match(/\/01\/(\d{14})(?:\D|$)/) || t.match(/^(\d{14})$/);
+    if (g) { const c13 = g[1].replace(/^0/, ''); if (c13.length === 13 && eanOk(c13)) code = /^00000/.test(c13) ? c13.slice(5) : c13; }
+    else if (/^\d{8}$|^\d{12,13}$/.test(t) && eanOk(t)) code = t;
+  }
+  if (code) { lookup(code, mi, kind); return; }
+  ui.form = { kind: 'nocode', mi };
+  const link = /^https?:\/\//i.test(t);
+  openSheet(`<div class="row sheet-top"><h3>Это не код товара</h3><button class="btn sm plain" data-act="prodAdd" data-m="${mi}">Назад</button></div>
+  ${scanSteps(['работает', 'ok'], ['прочитан, но без номера товара', 'bad'])}
+  <div class="hint">Камера прочитала ${kind}, но в нём ${link ? 'ссылка' : 'служебная запись'}, а не номер товара, поэтому найти КБЖУ по нему нельзя. Так бывает у готовой еды и собственных марок магазинов.</div>
+  <div class="card" style="background:var(--field);box-shadow:none;word-break:break-all"><div class="muted small">Что в коде</div>${esc(t.slice(0, 160))}</div>
+  <p class="muted small" style="margin:0 0 12px">Если на упаковке есть полосатый штрихкод с цифрами, отсканируйте его. Если нет, введите КБЖУ с этикетки, это занимает полминуты.</p>
+  <button class="btn block" data-act="prodManual">Ввести КБЖУ вручную</button>
+  <button class="btn ghost block" style="margin-top:8px" data-act="scanStart">Сканировать другой код</button>`);
+}
+async function lookup(code, mi, kind) {
+  const pre = kind ? `Код прочитан: ${kind} ${code}. ` : '';
+  if (state.products[code]) { productSheet(mi, code, state.products[code], kind ? pre + 'Этот продукт вы уже сохраняли.' : ''); return; }
   ui.form = { kind: 'wait', mi };
-  openSheet(`<div class="row sheet-top"><h3>Ищу продукт…</h3><button class="btn sm plain" data-act="close">Закрыть</button></div><div class="empty">Штрихкод ${esc(code)}</div>`);
+  openSheet(`<div class="row sheet-top"><h3>Ищу продукт…</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
+  ${scanSteps(kind ? ['работает', 'ok'] : ['не нужна', 'ok'], [code, 'ok'], ['ищу…', 'run'])}`);
   let p = null, note = '';
   try {
     const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 9000);
@@ -858,12 +928,12 @@ async function lookup(code, mi) {
       const kcal = n ? (n['energy-kcal_100g'] != null ? Number(n['energy-kcal_100g']) : n.energy_100g != null ? Number(n.energy_100g) / 4.184 : null) : null;
       const name = [pr.product_name_ru || pr.product_name, pr.brands ? String(pr.brands).split(',')[0].trim() : ''].filter(Boolean).join(', ');
       p = { name, kcal, p: n ? Number(n.proteins_100g) || 0 : 0, f: n ? Number(n.fat_100g) || 0 : 0, c: n ? Number(n.carbohydrates_100g) || 0 : 0, g: Number(pr.serving_quantity) || 100 };
-      if (kcal == null || !isFinite(kcal)) { p.kcal = ''; note = 'Продукт в базе есть, но без КБЖУ. Введите цифры с упаковки, планер их запомнит.'; }
-      else note = 'Найдено в Open Food Facts. Сверьте цифры с упаковкой: базу заполняют пользователи.';
-    } else note = 'В базе такого продукта нет. Введите название и КБЖУ с упаковки, планер запомнит этот штрихкод.';
-  } catch (_) { note = 'Не удалось связаться с базой продуктов. Введите КБЖУ с упаковки, планер запомнит этот штрихкод.'; }
+      if (kcal == null || !isFinite(kcal)) { p.kcal = ''; note = pre + 'Продукт в базе есть, но без КБЖУ. Введите цифры с упаковки, планер их запомнит.'; }
+      else note = pre + 'Найдено в Open Food Facts. Сверьте цифры с упаковкой: базу заполняют пользователи.';
+    } else note = pre + 'В открытой базе этого продукта нет: так часто бывает с готовой едой и собственными марками магазинов. Введите название и КБЖУ с этикетки, планер запомнит этот код, и в следующий раз всё подставится само.';
+  } catch (_) { note = pre + 'База продуктов не ответила (нет связи или она недоступна). Введите КБЖУ с этикетки, планер запомнит этот код.'; }
   if (!ui.form || ui.form.kind !== 'wait') return;           // шторку уже закрыли
-  productSheet(mi, code, p || { name: '', kcal: '', p: '', f: '', c: '', g: 100 }, note);
+  productSheet(mi, code, p || NO_PROD, note);
 }
 function productSheet(mi, code, p, note, editIdx) {
   stopScan();
@@ -1070,7 +1140,7 @@ const actions = {
   prodAdd: el => { prodSheet(Number(el.dataset.m)); return false; },
   scanStart: () => { scanSheet(); return false; },
   bcFind: () => { const c = $('#bc').value.replace(/\D/g, ''); if (!eanOk(c)) { toast('Проверьте цифры: в штрихкоде их 8, 12 или 13'); return false; } lookup(c, ui.form.mi); return false; },
-  prodManual: () => { productSheet(ui.form.mi, '', { name: '', kcal: '', p: '', f: '', c: '', g: 100 }); return false; },
+  prodManual: () => { productSheet(ui.form.mi, '', NO_PROD); return false; },
   prodPick: el => { const p = state.products[el.dataset.code]; if (p) productSheet(ui.form.mi, /^\d+$/.test(el.dataset.code) ? el.dataset.code : '', p); ui.form.code = el.dataset.code; return false; },
   prodSave: () => {
     const r = prodRead(), f = ui.form;
