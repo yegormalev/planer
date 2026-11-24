@@ -390,3 +390,19 @@ ol.steps li { margin-bottom: 4px; }
 .lstat button em { font-style: normal; color: var(--muted); font-size: 20px; }
 u.ok, u.bad { text-decoration: none; font-weight: 650; } u.ok { color: var(--ok); } u.bad { color: var(--danger); }
 .lday.miss i { background: var(--danger) !important; }
+
+/* Версия 14: несколько напоминаний */
+.remlist { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; align-items: center; min-height: 30px; }
+.rem { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-soft); color: var(--accent); font-weight: 650; font-size: 14px; border-radius: 999px; padding: 5px 6px 5px 12px; }
+.rem button { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; color: var(--accent); }
+.remcustom { display: grid; grid-template-columns: auto 72px 1fr auto; gap: 8px; align-items: center; margin-top: 8px; }
+.remcustom[hidden] { display: none; }
+.remcustom .inp { margin: 0; } .remcustom .btn { padding: 0 14px; height: 46px; }
+
+/* Версия 14: дела на несколько дней и занятые целиком дни */
+.day.busy:not(.sel) { background: color-mix(in srgb, var(--warn) 22%, transparent); border-radius: 6px; }
+.day.busy.today:not(.sel) { box-shadow: inset 0 0 0 2px var(--accent); }
+.busyh { background: color-mix(in srgb, var(--warn) 16%, var(--card)); }
+.busyb { color: var(--warn); font-weight: 650; }
+.busyl .sw { display: flex; align-items: center; gap: 10px; min-height: 46px; margin-top: 5px; }
+.busyl em { font-style: normal; font-size: 12px; color: var(--muted); font-weight: 500; line-height: 1.25; }

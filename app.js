@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 13;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 14;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -13,8 +13,8 @@ const CATS = [
   { id: 'other', name: 'Другое', color: '#8792a2' }
 ];
 const COLS = [['backlog', 'Бэклог'], ['doing', 'В процессе'], ['done', 'Сделал'], ['wait', 'Ожидание'], ['closed', 'Закрыта']];
-const REMIND = [['', 'Не напоминать'], ['0', 'В момент начала'], ['5', 'За 5 минут'], ['15', 'За 15 минут'],
-  ['30', 'За 30 минут'], ['60', 'За час'], ['1440', 'За день']];
+const REMIND = [0, 5, 15, 30, 60, 120, 1440, 2880, 4320, 10080, 20160, 43200];   // минут до начала
+const REM_UNITS = [['1', 'минут'], ['60', 'часов'], ['1440', 'дней'], ['10080', 'недель']];
 const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const WD_FULL = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
@@ -114,19 +114,42 @@ const ui = { tab: 'today', sub: null, date: today(), month: today().slice(0, 7) 
 /* ---------- Время задач ---------- */
 function endOf(it) { return it.end || (it.time && it.dur ? hhmm(mins(it.time) + Math.round(it.dur * 60)) : ''); }
 function timeText(it) {
-  const e = endOf(it);
-  if (it.time) return e ? `${it.time}–${e}` : it.time;
-  return it.dur ? `≈ ${ru(it.dur)} ч` : '';
+  const e = endOf(it), span = it.dateTo ? `${short(it.date)} – ${short(it.dateTo)}` : '';
+  const t = it.time ? (e ? `${it.time}–${e}` : it.time) : it.busy ? (span ? '' : 'весь день') : it.dur ? `≈ ${ru(it.dur)} ч` : '';
+  return [span, t].filter(Boolean).join(', ');
 }
+// Дело может идти несколько дней подряд (dateTo) и занимать дни целиком (busy), например отпуск.
+const lastDay = i => i.dateTo || i.date;
+const onDay = (i, d) => i.date <= d && d <= lastDay(i);
+const overlap = (x, y) => x.date <= lastDay(y) && y.date <= lastDay(x);
 // Пересечения по времени: несделанные дела одного дня, у которых интервалы накладываются (без конца считаем 30 минут).
 function clashes(date) {
-  const a = state.items.filter(i => i.date === date && i.time && !i.done).map(i => { const s = mins(i.time); let e = endOf(i) ? mins(endOf(i)) : s + 30; if (e <= s) e = 1440; return { i, s, e }; });
-  const m = {};
-  for (const x of a) for (const y of a) if (x !== y && x.s < y.e && y.s < x.e) (m[x.i.id] || (m[x.i.id] = [])).push(y.i);
+  const all = state.items.filter(i => onDay(i, date) && !i.done), m = {};
+  const add = (x, y) => { const l = m[x.id] || (m[x.id] = []); if (!l.includes(y)) l.push(y); };
+  for (const b of all) if (b.busy) for (const x of all) if (x !== b) { add(b, x); add(x, b); }      // занятый целиком день пересекается со всем остальным
+  const a = all.filter(i => i.time && !i.busy && !i.dateTo).map(i => { const s = mins(i.time); let e = endOf(i) ? mins(endOf(i)) : s + 30; if (e <= s) e = 1440; return { i, s, e }; });
+  for (const x of a) for (const y of a) if (x !== y && x.s < y.e && y.s < x.e) add(x.i, y.i);
   return m;
 }
-const clashText = list => 'Пересекается: ' + list.map(o => `«${esc(o.title)}» ${timeText(o)}`).join(', ');
+const clashText = list => 'Пересекается: ' + list.slice(0, 3).map(o => `«${esc(o.title)}» ${timeText(o)}`).join(', ') + (list.length > 3 ? ` и ещё ${list.length - 3}` : '');
 const when = d => d === today() ? 'сегодня' : d === addDays(today(), -1) ? 'вчера' : short(d);
+/* Напоминания: у дела их может быть несколько, срок в минутах до начала. Дело без времени считается от 9:00. */
+const rems = it => Array.isArray(it.reminds) ? it.reminds : it.remind !== '' && it.remind != null ? [Number(it.remind)] : [];
+const remBase = it => new Date(`${it.date}T${it.time || '09:00'}`).getTime();
+function remLabel(m) {
+  if (m === 0) return 'В момент начала';
+  if (m % 10080 === 0) return m === 10080 ? 'За неделю' : `За ${m / 10080} ${plural(m / 10080, 'неделю', 'недели', 'недель')}`;
+  if (m % 1440 === 0) return m === 1440 ? 'За день' : `За ${m / 1440} ${plural(m / 1440, 'день', 'дня', 'дней')}`;
+  if (m % 60 === 0) return m === 60 ? 'За час' : `За ${m / 60} ${plural(m / 60, 'час', 'часа', 'часов')}`;
+  return `За ${m} ${plural(m, 'минуту', 'минуты', 'минут')}`;
+}
+function leftText(ms) {
+  const m = Math.round(ms / 60000);
+  if (m <= 0) return 'сейчас';
+  if (m < 90) return `через ${m} ${plural(m, 'минуту', 'минуты', 'минут')}`;
+  if (m < 36 * 60) { const h = Math.round(m / 60); return `через ${h} ${plural(h, 'час', 'часа', 'часов')}`; }
+  const d = Math.round(m / 1440); return `через ${d} ${plural(d, 'день', 'дня', 'дней')}`;
+}
 const byTime = (a, b) => (a.date + (a.time || '99:99')).localeCompare(b.date + (b.time || '99:99'));
 
 /* ---------- Питание ---------- */
@@ -229,12 +252,13 @@ function itemHtml(it, showDate, cl) {
       <button class="open" data-act="edit" data-id="${it.id}">
         <div class="title">${esc(it.title)}</div>
         <div class="meta">
-          ${showDate ? `<span>${short(it.date)}</span>` : ''}
+          ${showDate && !it.dateTo ? `<span>${short(it.date)}</span>` : ''}
           ${tt ? `<span class="time">${tt}</span>` : ''}
+          ${it.busy ? '<span class="busyb">день занят</span>' : ''}
           <span><i class="dot" style="background:${c.color}"></i>${c.name}</span>
           ${it.who ? `<span>👥 ${esc(it.who)}</span>` : ''}
           ${it.place ? `<span>${esc(it.place)}</span>` : ''}
-          ${it.remind !== '' && it.remind != null && it.time ? '<span>🔔</span>' : ''}
+          ${rems(it).length ? `<span>🔔${rems(it).length > 1 ? ' ' + rems(it).length : ''}</span>` : ''}
           ${it.subs && it.subs.length ? `<span>${subDone}/${it.subs.length}</span>` : ''}
         </div>
         ${cl ? `<div class="clash-t">${clashText(cl)}</div>` : ''}
@@ -249,7 +273,7 @@ const seg = (act, cur, opts) => `<div class="seg" style="grid-template-columns:r
 /* ---------- Сегодня ---------- */
 function viewToday() {
   const t = today(), now = new Date(), nowM = now.getHours() * 60 + now.getMinutes();
-  const items = state.items.filter(i => i.date === t).sort(byTime);
+  const items = state.items.filter(i => onDay(i, t)).sort(byTime);
   const done = items.filter(i => i.done).length, pct = items.length ? Math.round(done / items.length * 100) : 0;
   const fs = foodStat([t]);
   const timed = items.filter(i => i.time), free = items.filter(i => !i.time);
@@ -271,9 +295,9 @@ function viewToday() {
   const row = i => {
     const c = cat(i.cat), e = endOf(i), x = cl[i.id];
     return `<div class="tl ${i.done ? 'done' : ''} ${cur && cur.id === i.id ? 'cur' : ''} ${x ? 'clash' : ''}" style="--c:${c.color}">
-      <div class="tl-t">${i.time ? `<b>${i.time}</b>${e ? `<span>${e}</span>` : ''}` : i.dur ? `<span>≈ ${ru(i.dur)} ч</span>` : '<span>в течение дня</span>'}</div>
+      <div class="tl-t">${i.time ? `<b>${i.time}</b>${e ? `<span>${e}</span>` : ''}` : i.busy ? '<span>весь день</span>' : i.dur ? `<span>≈ ${ru(i.dur)} ч</span>` : '<span>в течение дня</span>'}</div>
       <button class="tl-b" data-act="edit" data-id="${i.id}"><div class="title">${esc(i.title)}</div>
-        <div class="meta"><span>${c.name}</span>${i.who ? `<span>👥 ${esc(i.who)}</span>` : ''}${i.subs && i.subs.length ? `<span>${i.subs.filter(s => s.done).length}/${i.subs.length}</span>` : ''}</div>
+        <div class="meta">${i.dateTo ? `<span>${short(i.date)} – ${short(i.dateTo)}</span>` : ''}<span>${c.name}</span>${i.who ? `<span>👥 ${esc(i.who)}</span>` : ''}${i.subs && i.subs.length ? `<span>${i.subs.filter(s => s.done).length}/${i.subs.length}</span>` : ''}</div>
         ${x ? `<div class="clash-t">${clashText(x)}</div>` : ''}</button>
       <input type="checkbox" data-ch="done" data-id="${i.id}" ${i.done ? 'checked' : ''} aria-label="Сделано"></div>`;
   };
@@ -288,6 +312,7 @@ function viewToday() {
   ${nowCard ? `<div class="nows">${nowCard}</div>` : ''}
   ${blank() && !state.items.length ? `<div class="hint"><b>Планер пока пустой, заполните его под себя</b><ol class="steps"><li>Добавьте первое дело кнопкой «+» или строкой «Быстро» ниже.</li><li>Во вкладке «Питание» составьте своё меню и укажите рост и вес.</li><li>Во вкладке «Развитие» добавьте свои курсы и ссылки.</li></ol>Уже пользовались планером на другом устройстве? Войдите во вкладке «Ещё», блок «Синхронизация».</div>` : ''}
   <div class="row spread"><h2>Расписание${todo.length ? ` · ${todo.length}` : ''}</h2><button class="btn sm ghost" data-act="weekSum" data-o="0">Итоги недели</button></div>
+  ${items.some(i => i.busy && !i.done) ? `<div class="hint busyh">Сегодня день занят целиком: ${items.filter(i => i.busy && !i.done).map(i => `<b>${esc(i.title)}</b>${i.dateTo ? ` (${short(i.date)} – ${short(i.dateTo)})` : ''}`).join(', ')}.</div>` : ''}
   ${ncl ? `<div class="alert">Накладка по времени: ${ncl} ${plural(ncl, 'дело пересекается', 'дела пересекаются', 'дел пересекаются')}. Они отмечены красным.</div>` : ''}
   <div class="card tlc">${todo.length ? todo.map(row).join('') : `<div class="empty">${closed.length ? 'Всё на сегодня сделано' : 'Дел пока нет. Добавьте первое ниже.'}</div>`}
     ${closed.length ? `<button class="fold" data-act="tdToggle" data-k="done"><span>Сделано · ${closed.length}</span><em>${td.done ? 'скрыть' : 'показать'}</em></button>${td.done ? closed.map(row).join('') : ''}` : ''}</div>
@@ -312,19 +337,19 @@ function viewToday() {
   <button class="fab" data-act="add" aria-label="Добавить">+</button>`;
 }
 
-const lateItems = () => { const t = today(); return state.items.filter(i => i.date < t && !i.done && !i.seed && !i.series).sort(byTime); };
+const lateItems = () => { const t = today(); return state.items.filter(i => lastDay(i) < t && !i.done && !i.seed && !i.series).sort(byTime); };
 
 /* ---------- Итоги недели ---------- */
 function weekStats(mon) {
   const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(mon, i)), t = today(), past = days.filter(d => d <= t);
-  const items = state.items.filter(i => i.date >= days[0] && i.date <= days[6]), sport = items.filter(i => i.cat === 'sport');
+  const items = state.items.filter(i => lastDay(i) >= days[0] && i.date <= days[6]), sport = items.filter(i => i.cat === 'sport');
   const fs = foodStat(past.length ? past : days), avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
   const w = days.filter(d => state.body[d] && state.body[d].w != null).map(d => state.body[d].w);
   const f = days.filter(d => state.body[d] && state.body[d].fat != null).map(d => state.body[d].fat);
   const hab = k => avg(days.map(d => (state.day[d] || {})[k]).filter(v => v));
   return {
     days, total: items.length, done: items.filter(i => i.done).length, sportT: sport.length, sportD: sport.filter(i => i.done).length,
-    perDay: days.map(d => { const a = items.filter(i => i.date === d); return { n: a.length, d: a.filter(i => i.done).length }; }),
+    perDay: days.map(d => { const a = items.filter(i => onDay(i, d)); return { n: a.length, d: a.filter(i => i.done).length }; }),
     food: fs, learnMin: Math.floor(days.reduce((x, d) => x + learnSecs(d), 0) / 60),
     learnDays: days.filter(d => { const i = learnIdx(d); return i != null && learnProgress(i).full; }).length,
     w, f, water: hab('water'), steps: hab('steps'), sleep: hab('sleep')
@@ -360,16 +385,18 @@ function weekSheet(off) {
 function viewCal() {
   const m = parse(ui.month), first = monday(ui.month), t = today();
   const marks = {};
-  for (const it of state.items) { const x = marks[it.date] || (marks[it.date] = { n: 0, d: 0 }); x.n++; if (it.done) x.d++; }
+  for (const it of state.items) for (let d = it.date, k = 0; d <= lastDay(it) && k < 370; d = addDays(d, 1), k++) {
+    const x = marks[d] || (marks[d] = { n: 0, d: 0, busy: false }); x.n++; if (it.done) x.d++; if (it.busy && !it.done) x.busy = true;
+  }
   let cells = '';
   for (let i = 0; i < 42; i++) {
     const d = addDays(first, i), mk = marks[d];
     if (i === 35 && parse(d).getMonth() !== m.getMonth()) break;
     const bad = mk && mk.n > 1 && Object.keys(clashes(d)).length;
-    cells += `<button class="day ${parse(d).getMonth() !== m.getMonth() ? 'out' : ''} ${d === t ? 'today' : ''} ${d === ui.date ? 'sel' : ''}" data-act="day" data-date="${d}">
+    cells += `<button class="day ${parse(d).getMonth() !== m.getMonth() ? 'out' : ''} ${d === t ? 'today' : ''} ${d === ui.date ? 'sel' : ''} ${mk && mk.busy ? 'busy' : ''}" data-act="day" data-date="${d}">
       ${parse(d).getDate()}<i class="${mk ? (bad ? 'clash' : mk.d === mk.n ? 'done' : '') : 'none'}"></i></button>`;
   }
-  const items = state.items.filter(i => i.date === ui.date).sort(byTime);
+  const items = state.items.filter(i => onDay(i, ui.date)).sort(byTime), busyNow = items.filter(i => i.busy && !i.done);
   const done = items.filter(i => i.done).length, fs = foodStat([ui.date]), li = learnIdx(ui.date), cl = clashes(ui.date), ncl = Object.keys(cl).length;
   return head(`${MONTHS[m.getMonth()]} <span class="yr">${m.getFullYear()}</span>`, `<div class="row">
     <button class="icon-btn" data-act="month" data-d="-1" aria-label="Предыдущий месяц">‹</button>
@@ -382,6 +409,7 @@ function viewCal() {
     <button class="btn sm ghost" data-act="shareDay">Поделиться</button>
   </div>
   ${items.length ? `<div class="progress" style="margin:0 4px 12px"><b style="width:${Math.round(done / items.length * 100)}%"></b></div>` : ''}
+  ${busyNow.length ? `<div class="hint busyh">День занят целиком: ${busyNow.map(i => `<b>${esc(i.title)}</b>${i.dateTo ? ` (${short(i.date)} – ${short(i.dateTo)})` : ''}`).join(', ')}. Другие дела на этот день лучше не ставить.</div>` : ''}
   ${ncl ? `<div class="alert">Накладка по времени: ${ncl} ${plural(ncl, 'дело пересекается', 'дела пересекаются', 'дел пересекаются')}. Они отмечены красным.</div>` : ''}
   <div class="card">${items.length ? items.map(i => itemHtml(i, false, cl[i.id])).join('') : '<div class="empty">Нажмите «+», чтобы добавить задачу или встречу</div>'}</div>
   ${li != null ? `<button class="card link" data-act="learnOpen" data-i="${li}"><i class="tile" style="background:${TRACKS[PLAN[li][0]].color}">${li + 1}</i>
@@ -691,7 +719,7 @@ function viewLearn() {
 /* ---------- Разделы, заметки, доска ---------- */
 function viewSec() {
   const all = state.items.filter(i => i.cat === ui.cat).sort(byTime);
-  const t = today(), plan = all.filter(i => !i.done && i.date >= t).slice(0, 40), late = all.filter(i => !i.done && i.date < t);
+  const t = today(), plan = all.filter(i => !i.done && lastDay(i) >= t).slice(0, 40), late = all.filter(i => !i.done && lastDay(i) < t);
   const done = all.filter(i => i.done).reverse().slice(0, 30), notes = state.notes.filter(n => n.cat === ui.cat);
   return head('Разделы', '<button class="btn sm ghost" data-act="back">Назад</button>') + `
   <div class="chips">${CATS.map(c => `<button class="chip ${ui.cat === c.id ? 'on' : ''}" data-act="cat" data-cat="${c.id}"><i class="dot" style="background:${c.color}"></i>${c.name}</button>`).join('')}</div>
@@ -804,19 +832,21 @@ sheet.addEventListener('close', () => { ui.form = null; stopScan(); });
 const catSelect = (id, cur) => `<select id="${id}">${CATS.map(c => `<option value="${c.id}" ${c.id === (cur || 'work') ? 'selected' : ''}>${c.name}</option>`).join('')}</select>`;
 
 function itemForm(it) {
-  ui.form = { kind: 'item', id: it.id || null, type: it.type || 'task', rep: 'none', days: new Set([wdi(it.date || ui.date)]) };
+  ui.form = { kind: 'item', id: it.id || null, type: it.type || 'task', rep: 'none', days: new Set([wdi(it.date || ui.date)]), rems: rems(it).slice().sort((x, y) => x - y) };
   const isNew = !it.id;
   openSheet(`<div class="row sheet-top"><h3>${isNew ? 'Новая запись' : 'Запись'}</h3><button class="btn sm plain" data-act="close">Закрыть</button></div>
   <div class="seg"><button data-act="type" data-type="task" class="${ui.form.type === 'task' ? 'on' : ''}">Задача</button><button data-act="type" data-type="meeting" class="${ui.form.type === 'meeting' ? 'on' : ''}">Встреча</button></div>
   <label class="f">Название<input id="f-title" value="${esc(it.title || '')}" placeholder="Что нужно сделать" autocomplete="off"></label>
   <div class="two"><label class="f">Дата<input type="date" id="f-date" value="${it.date || ui.date}"></label>
   <label class="f">Раздел${catSelect('f-cat', it.cat)}</label></div>
+  <div class="two"><label class="f">По дату, если на несколько дней<input type="date" id="f-to" value="${it.dateTo || ''}"></label>
+  <label class="f busyl"><span>Занять дни целиком</span><span class="sw"><input type="checkbox" id="f-busy" ${it.busy ? 'checked' : ''}><em>другие дела будут отмечаться красным</em></span></label></div>
   <div class="two"><label class="f">Начало<input type="time" id="f-time" value="${esc(it.time || '')}"></label>
   <label class="f">Конец<input type="time" id="f-end" value="${esc(it.end || '')}"></label></div>
   <div class="two"><label class="f">или длительность, часов<input inputmode="decimal" id="f-dur" value="${it.dur ? ru(it.dur) : ''}" placeholder="например 1,5"></label>
   <label class="f">С кем<input id="f-who" value="${esc(it.who || '')}" placeholder="Имя или команда" autocomplete="off"></label></div>
   <label class="f">Место или ссылка<input id="f-place" value="${esc(it.place || '')}" placeholder="Необязательно" autocomplete="off"></label>
-  <label class="f">Напоминание<select id="f-remind">${REMIND.map(([v, t]) => `<option value="${v}" ${String(it.remind ?? '') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+  <div class="f">Напоминания<div id="remBox">${remBox()}</div></div>
   ${isNew ? `<div class="f">Повтор
     <div class="seg" id="rep" style="grid-template-columns:repeat(3,1fr);margin:5px 0 0"><button data-act="rep" data-v="none" class="on">Один раз</button><button data-act="rep" data-v="daily">Каждый день</button><button data-act="rep" data-v="days">По дням</button></div>
     <div id="repMore" hidden><div class="wdpick">${WD.map((w, i) => `<button data-act="repDay" data-i="${i}" class="${ui.form.days.has(i) ? 'on' : ''}">${w}</button>`).join('')}</div>
@@ -828,22 +858,45 @@ function itemForm(it) {
   ${it.series ? '<button class="btn danger block" data-act="delSeries">Удалить все будущие повторы</button>' : ''}`}`);
   if (isNew) setTimeout(() => $('#f-title') && $('#f-title').focus(), 50);
 }
+function remBox() {
+  const r = ui.form.rems;
+  return `<div class="remlist">${r.length ? r.map(m => `<span class="rem">${remLabel(m)}<button data-act="remDel" data-m="${m}" aria-label="Убрать напоминание">×</button></span>`).join('') : '<span class="muted small">Пока без напоминаний</span>'}</div>
+  <select id="f-remadd" class="inp" data-ch="remAdd" aria-label="Добавить напоминание"><option value="">＋ Добавить напоминание</option>${REMIND.filter(m => !r.includes(m)).map(m => `<option value="${m}">${remLabel(m)}</option>`).join('')}<option value="custom">Свой срок…</option></select>
+  <div id="remCustom" class="remcustom" hidden><span>За</span><input id="f-remn" class="inp" inputmode="numeric" value="10"><select id="f-remu" class="inp">${REM_UNITS.map(([v, t]) => `<option value="${v}" ${v === '1440' ? 'selected' : ''}>${t}</option>`).join('')}</select><button class="btn" data-act="remCustom">Добавить</button></div>
+  <p class="muted small" style="margin:6px 0 0">Можно добавить несколько. У дела без времени срок считается от 9:00.</p>`;
+}
+function remAdd(m) {
+  const r = ui.form.rems; m = Math.round(m);
+  if (!(m >= 0) || m > 525600) { toast('Срок напоминания: не больше года'); return; }
+  if (r.includes(m)) { toast('Такое напоминание уже есть'); return; }
+  if (r.length >= 8) { toast('Не больше 8 напоминаний на одно дело'); return; }
+  r.push(m); r.sort((x, y) => x - y); $('#remBox').innerHTML = remBox();
+}
 function readItemForm() {
   const f = ui.form, old = state.items.find(i => i.id === f.id) || {};
   const title = $('#f-title').value.trim();
   if (!title) { toast('Введите название'); $('#f-title').focus(); return null; }
   const oldSubs = old.subs || [], time = $('#f-time').value, end = $('#f-end').value, d = num($('#f-dur').value);
+  const date = $('#f-date').value || ui.date, to = $('#f-to').value, dateTo = to && to > date && f.rep === 'none' ? to : '';
+  if (to && to < date) { toast('Дата окончания раньше даты начала'); return null; }
   return {
-    id: f.id || uid(), title, type: f.type, date: $('#f-date').value || ui.date, time, end: time ? end : '',
+    id: f.id || uid(), title, type: f.type, date, dateTo, busy: $('#f-busy').checked, time, end: time ? end : '',
     dur: !end && d && d > 0 ? d : null, who: $('#f-who').value.trim(),
-    cat: $('#f-cat').value, remind: $('#f-remind').value, place: $('#f-place').value.trim(), note: $('#f-note').value.trim(),
+    cat: $('#f-cat').value, remind: '', reminds: f.rems.slice(), place: $('#f-place').value.trim(), note: $('#f-note').value.trim(),
     subs: lines($('#f-subs').value).map(t => ({ text: t, done: !!(oldSubs.find(s => s.text === t) || {}).done })),
-    done: !!old.done, notified: false, series: old.series
+    done: !!old.done, series: old.series,
+    sent: old.date === date && (old.time || '') === time ? (old.sent || []).filter(m => f.rems.includes(m)) : []
   };
 }
 function saveItemForm() {
   const it = readItemForm(); if (!it) return null;
   const f = ui.form, i = state.items.findIndex(x => x.id === it.id);
+  const others = state.items.filter(x => x.id !== it.id && !x.done && overlap(x, it)), blockers = others.filter(x => x.busy);
+  const sig = it.date + '|' + it.dateTo + '|' + blockers.map(x => x.id).join();
+  if (blockers.length && f.okBusy !== sig) {                // на эти даты уже стоит занятый целиком период
+    if (!confirm(`${it.dateTo ? 'На эти даты' : 'На ' + short(it.date)} уже стоит ${blockers.map(x => `«${x.title}»${x.dateTo ? ` (${short(x.date)} – ${short(x.dateTo)})` : ''}`).join(', ')}: ${blockers.length > 1 ? 'дни заняты' : 'день занят'} целиком. Всё равно сохранить?`)) return null;
+    f.okBusy = sig;
+  }
   if (i >= 0) state.items[i] = it;
   else if (f.rep === 'none') state.items.push(it);
   else {
@@ -858,7 +911,9 @@ function saveItemForm() {
     save(); return firstCopy || it;
   }
   save();
-  const cl = clashes(it.date)[it.id]; if (cl) toast('Накладка по времени: ' + cl.map(o => `«${o.title}»`).join(', '));
+  const cl = clashes(it.date)[it.id];
+  if (it.busy && others.length) toast(`В эти дни уже есть дела: ${others.length}. Они отмечены красным.`);
+  else if (cl) toast('Накладка по времени: ' + cl.slice(0, 3).map(o => `«${o.title}»`).join(', '));
   return it;
 }
 
@@ -1122,7 +1177,7 @@ function itemText(it) {
   return t;
 }
 function dayText(date) {
-  const items = state.items.filter(i => i.date === date).sort(byTime);
+  const items = state.items.filter(i => onDay(i, date)).sort(byTime);
   return `План на ${human(date).toLowerCase()}\n\n` + (items.length ? items.map(itemText).join('\n') : 'Планов нет');
 }
 function foodText(date) {
@@ -1145,12 +1200,12 @@ function icsFile(it) {
     const st = new Date(`${it.date}T${it.time}`), en = endOf(it) ? new Date(st.getTime() + ((mins(endOf(it)) - mins(it.time) + 1440) % 1440 || 60) * 60000) : new Date(st.getTime() + 3600000);
     const f = x => `${x.getFullYear()}${pad(x.getMonth() + 1)}${pad(x.getDate())}T${pad(x.getHours())}${pad(x.getMinutes())}00`;
     when = `DTSTART:${f(st)}\r\nDTEND:${f(en)}`;
-  } else when = `DTSTART;VALUE=DATE:${d}\r\nDTEND;VALUE=DATE:${addDays(it.date, 1).replace(/-/g, '')}`;
-  const m = it.remind === '' || it.remind == null ? 15 : Number(it.remind);
+  } else when = `DTSTART;VALUE=DATE:${d}\r\nDTEND;VALUE=DATE:${addDays(lastDay(it), 1).replace(/-/g, '')}`;
+  const al = (rems(it).length ? rems(it) : [15]).map(m => { const x = it.time ? m : m - 540; return ['BEGIN:VALARM', `TRIGGER:${x >= 0 ? '-' : ''}PT${Math.abs(x)}M`, 'ACTION:DISPLAY', `DESCRIPTION:${e(it.title)}`, 'END:VALARM']; }).flat();
   const desc = [it.who ? 'С кем: ' + it.who : '', it.note, ...(it.subs || []).map(s => '- ' + s.text)].filter(Boolean).join('\n');
   const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//My Planer//RU', 'BEGIN:VEVENT', `UID:${it.id}@planer`, `DTSTAMP:${stamp}`, when,
     `SUMMARY:${e(it.title)}`, desc ? `DESCRIPTION:${e(desc)}` : '', it.place ? `LOCATION:${e(it.place)}` : '',
-    'BEGIN:VALARM', `TRIGGER:-PT${m}M`, 'ACTION:DISPLAY', `DESCRIPTION:${e(it.title)}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR']
+    ...al, 'END:VEVENT', 'END:VCALENDAR']
     .filter(Boolean).join('\r\n');
   return new File([ics], 'plan.ics', { type: 'text/calendar' });
 }
@@ -1168,12 +1223,14 @@ async function notify(title, body, tag) {
 function checkReminders() {
   const now = Date.now(); let changed = false;
   for (const it of state.items) {
-    if (it.done || it.notified || !it.time || it.remind === '' || it.remind == null) continue;
-    const start = new Date(`${it.date}T${it.time}`).getTime(), at = start - Number(it.remind) * 60000;
-    if (now >= at && now - start < 3600000) {
-      it.notified = true; changed = true;
-      notify(it.title, `${it.type === 'meeting' ? 'Встреча' : 'Задача'} в ${it.time}${it.who ? ', участники: ' + it.who : ''}${it.place ? ', ' + it.place : ''}`, it.id);
-    } else if (now - start >= 3600000) { it.notified = true; changed = true; }
+    const r = rems(it); if (it.done || !r.length) continue;
+    const sent = it.sent || [], todo = r.filter(m => !sent.includes(m)); if (!todo.length) continue;
+    const base = remBase(it), due = todo.filter(m => now >= base - m * 60000); if (!due.length) continue;
+    it.sent = sent.concat(due); changed = true;             // если планер долго был закрыт, показываем одно, самое близкое к началу
+    if (now - base < 3600000) {
+      const kind = it.type === 'meeting' ? 'Встреча' : 'Задача', dayTxt = it.date === today() ? '' : ` ${short(it.date)}`;
+      notify(it.title, `${kind}${dayTxt}${it.time ? ' в ' + it.time : ''}, ${leftText(base - now)}${it.who ? ', участники: ' + it.who : ''}${it.place ? ', ' + it.place : ''}`, it.id + ':' + Math.min(...due));
+    }
   }
   if (changed) save();
 }
@@ -1202,6 +1259,8 @@ const actions = {
   cat: el => { ui.cat = el.dataset.cat; },
   noteCat: el => { ui.noteCat = el.dataset.cat; },
   notesView: el => { ui.notesView = el.dataset.v; },
+  remDel: el => { ui.form.rems = ui.form.rems.filter(m => m !== Number(el.dataset.m)); $('#remBox').innerHTML = remBox(); return false; },
+  remCustom: () => { const n = num($('#f-remn').value); if (!(n > 0)) { toast('Введите число'); return false; } remAdd(n * Number($('#f-remu').value)); return false; },
   tdToggle: el => { ui.td[el.dataset.k] = !ui.td[el.dataset.k]; },
   learnGo: () => { const s = learnState(); ui.tab = 'learn'; ui.learnDay = s.missed.length ? s.missed[0] : s.ti; window.scrollTo(0, 0); },
   theme: el => { state.settings.theme = el.dataset.v; save(); applyTheme(); },
@@ -1224,12 +1283,13 @@ const actions = {
     const m = v.match(/^(\d{1,2})[:.](\d{2})(?:\s*[-–]\s*(\d{1,2})[:.](\d{2}))?\s+(.+)$/);
     const ok = m && +m[1] < 24 && +m[2] < 60 && (!m[3] || (+m[3] < 24 && +m[4] < 60));
     state.items.push({ id: uid(), title: ok ? m[5] : v, type: 'task', date: today(), time: ok ? `${pad(+m[1])}:${m[2]}` : '', end: ok && m[3] ? `${pad(+m[3])}:${m[4]}` : '',
-      dur: null, who: '', cat: 'work', remind: '', place: '', note: '', subs: [], done: false });
+      dur: null, who: '', cat: 'work', remind: '', reminds: [], place: '', note: '', subs: [], done: false });
     save();
+    const bz = state.items.find(x => x.busy && !x.done && onDay(x, today())); if (bz) toast(`Сегодня день занят целиком: «${bz.title}»`);
   },
-  toToday: el => { const it = state.items.find(i => i.id === el.dataset.id); if (it) { it.date = today(); it.notified = false; save(); } },
-  lateAll: () => { const t = today(); lateItems().forEach(i => { i.date = t; i.notified = false; }); save(); },
-  toTomorrow: () => { const it = saveItemForm(); if (!it) return false; it.date = addDays(it.date < today() ? today() : it.date, 1); it.notified = false; save(); closeSheet(); toast(`Перенесено на ${short(it.date)}`); },
+  toToday: el => { const it = state.items.find(i => i.id === el.dataset.id); if (it) { if (it.dateTo) it.dateTo = addDays(it.dateTo, diffDays(it.date, today())); it.date = today(); it.sent = []; save(); } },
+  lateAll: () => { const t = today(); lateItems().forEach(i => { if (i.dateTo) i.dateTo = addDays(i.dateTo, diffDays(i.date, t)); i.date = t; i.sent = []; }); save(); },
+  toTomorrow: () => { const it = saveItemForm(); if (!it) return false; { const nd = addDays(it.date < today() ? today() : it.date, 1); if (it.dateTo) it.dateTo = addDays(it.dateTo, diffDays(it.date, nd)); it.date = nd; } it.sent = []; save(); closeSheet(); toast(`Перенесено на ${short(it.date)}`); },
   water: el => { const d = state.day[today()] || (state.day[today()] = {}); d.water = Math.max(0, Math.min(20, (d.water || 0) + Number(el.dataset.d))); save(); },
   weekSum: el => { weekSheet(Number(el.dataset.o)); return false; },
   weekShare: () => { share('Итоги недели', weekText(weekStats(addDays(monday(today()), ui.form.off * 7)))); return false; },
@@ -1369,6 +1429,7 @@ const changes = {
   fRepl: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items[Number(el.dataset.i)].repl = el.value.trim(); return false; },
   mNote: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].note = el.value.trim(); return false; },
   bw: el => bodySet('w', el),
+  remAdd: el => { const v = el.value; if (v === 'custom') { $('#remCustom').hidden = false; el.value = ''; $('#f-remn').focus(); } else if (v !== '') remAdd(Number(v)); return false; },
   shopOwn: el => { const i = state.shopOwn.find(x => x.id === el.dataset.id); if (i) i.done = el.checked; },
   prof: el => {
     const pr = state.settings.profile || (state.settings.profile = {}), k = el.dataset.k;
