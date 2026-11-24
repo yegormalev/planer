@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 14;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 15;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -825,10 +825,10 @@ function render() {
 
 /* ---------- Шторка с формой ---------- */
 const sheet = $('#sheet');
-function openSheet(html) { sheet.innerHTML = `<div class="grab"></div><div class="sheet-in">${html}</div>`; if (!sheet.open) sheet.showModal(); sheet.scrollTop = 0; }
+function openSheet(html) { if (toastEl.parentNode === sheet) document.body.appendChild(toastEl); sheet.innerHTML = `<div class="grab"></div><div class="sheet-in">${html}</div>`; if (!sheet.open) sheet.showModal(); sheet.scrollTop = 0; }
 function closeSheet() { if (sheet.open) sheet.close(); ui.form = null; }
 sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
-sheet.addEventListener('close', () => { ui.form = null; stopScan(); });
+sheet.addEventListener('close', () => { ui.form = null; stopScan(); if (toastEl.parentNode !== document.body) document.body.appendChild(toastEl); });
 const catSelect = (id, cur) => `<select id="${id}">${CATS.map(c => `<option value="${c.id}" ${c.id === (cur || 'work') ? 'selected' : ''}>${c.name}</option>`).join('')}</select>`;
 
 function itemForm(it) {
@@ -868,9 +868,13 @@ function remBox() {
 function remAdd(m) {
   const r = ui.form.rems; m = Math.round(m);
   if (!(m >= 0) || m > 525600) { toast('Срок напоминания: не больше года'); return; }
-  if (r.includes(m)) { toast('Такое напоминание уже есть'); return; }
+  if (r.includes(m)) {
+    toast(`Напоминание «${remLabel(m)}» уже добавлено`);
+    const chip = document.querySelector(`.rem button[data-m="${m}"]`); if (chip) { chip.parentNode.classList.add('flash'); setTimeout(() => chip.parentNode.classList.remove('flash'), 1600); }
+    return;
+  }
   if (r.length >= 8) { toast('Не больше 8 напоминаний на одно дело'); return; }
-  r.push(m); r.sort((x, y) => x - y); $('#remBox').innerHTML = remBox();
+  r.push(m); r.sort((x, y) => x - y); $('#remBox').innerHTML = remBox(); toast(`Добавлено: ${remLabel(m).toLowerCase()}`);
 }
 function readItemForm() {
   const f = ui.form, old = state.items.find(i => i.id === f.id) || {};
@@ -1156,7 +1160,12 @@ function itemSheet(mi, ii) {
 }
 
 /* ---------- Поделиться, экспорт ---------- */
-function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2600); }
+const toastEl = $('#toast');
+function toast(t) {
+  const el = toastEl, host = sheet.open ? sheet : document.body;   // открытая шторка лежит поверх страницы, поэтому подсказку показываем внутри неё
+  if (el.parentNode !== host) host.appendChild(el);
+  el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 3200);
+}
 async function share(title, text, file) {
   try {
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title }); return; }

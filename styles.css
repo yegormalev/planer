@@ -406,3 +406,6 @@ u.ok, u.bad { text-decoration: none; font-weight: 650; } u.ok { color: var(--ok)
 .busyb { color: var(--warn); font-weight: 650; }
 .busyl .sw { display: flex; align-items: center; gap: 10px; min-height: 46px; margin-top: 5px; }
 .busyl em { font-style: normal; font-size: 12px; color: var(--muted); font-weight: 500; line-height: 1.25; }
+
+/* Версия 15 */
+.rem.flash { background: var(--warn); color: #fff; } .rem.flash button { color: #fff; }
