@@ -117,7 +117,14 @@ async function syncNow(manual, choice) {
         if (!linked && !choice) { syRow = full.j[0]; syBusy = false; syChoiceSheet(); return; }   // первое подключение устройства, а в облаке уже есть данные
       }
       merged = choice === 'cloud' ? remote : choice === 'local' ? snap : syMerge(linked ? sy.base : undefined, snap, remote);
-      if (!linked) syDedup(merged);
+      if (!linked) {
+        syDedup(merged);
+        if (choice !== 'local' && syObj(merged) && remote && ((remote.settings || {}).preset || 'full') === 'full') {
+          const wasBlank = (snap.settings || {}).preset === 'blank';
+          (merged.settings || (merged.settings = {})).preset = 'full';   // в облаке заполненный планер: не превращаем его в пустой
+          if (wasBlank && remote.menu) merged.menu = remote.menu;         // и не затираем его меню пустым шаблоном нового устройства
+        }
+      }
       rev = hrow.rev;
       if (!syEq(merged, remote)) {
         const up = await syApi(`/rest/v1/planer?${uidq}&rev=eq.${hrow.rev}`, { method: 'PATCH', headers: { Prefer: 'return=representation' },

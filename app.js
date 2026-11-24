@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 12;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 13;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -19,14 +19,19 @@ const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const WD_FULL = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
 const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-const PLAN = window.LEARN_PLAN || [], TRACKS = window.LEARN_TRACKS || {};
+let PLAN = [];                                            // готовый план обучения есть только в заполненном варианте планера
+const TRACKS = window.LEARN_TRACKS || {};
 const LEARN_GOAL = 3600;                                  // час в день
 const TYPE = { v: 'Видео', a: 'Статья', c: 'Курс', t: 'Инструмент', l: 'Ссылка' };
 
 /* План сушки: исходные данные и расчёт */
-const P = { w: 82, h: 186, age: 24, rate: 0.5 };
-P.bmr = Math.round(10 * P.w + 6.25 * P.h - 5 * P.age + 5);          // Миффлин-Сан Жеор, мужчина
-P.tdee = Math.round(P.bmr * 1.6 / 10) * 10;                          // 5 тренировок по 1,5 часа в неделю
+const P_FULL = { w: 82, h: 186, age: 24, rate: 0.5 };
+P_FULL.bmr = Math.round(10 * P_FULL.w + 6.25 * P_FULL.h - 5 * P_FULL.age + 5);   // Миффлин-Сан Жеор, мужчина
+P_FULL.tdee = Math.round(P_FULL.bmr * 1.6 / 10) * 10;                            // 5 тренировок по 1,5 часа в неделю
+let P = P_FULL;
+const ACT = [['1.2', 'Сидячая работа, без спорта'], ['1.375', 'Лёгкая: 1–3 тренировки в неделю'], ['1.55', 'Средняя: 3–5 тренировок'], ['1.725', 'Высокая: 6–7 тренировок']];
+const GOALS = [['0.85', 'Снижение веса'], ['1', 'Поддержание'], ['1.1', 'Набор массы']];
+const blank = () => state.settings.preset === 'blank';
 
 /* ---------- Вспомогательное ---------- */
 const $ = s => document.querySelector(s);
@@ -56,6 +61,8 @@ function buildMenu() {
   const week = window.MENU_WEEK || [];
   return { ver: 3, title: 'План сушки', goal: '', days: week.map(d => d.meals.map(m => ({ ...m, items: m.items.slice(), im: m.im ? m.im.map(x => x.slice()) : null }))), labels: week.map(d => d.label) };
 }
+const emptyMenu = () => ({ ver: 3, title: 'Питание', goal: '', labels: [],
+  days: [0, 1, 2, 3, 4, 5, 6].map(() => [['Завтрак', '08:00'], ['Обед', '13:00'], ['Ужин', '19:00'], ['Перекус', '']].map(([name, time]) => ({ name, time, items: [] }))) });
 function migrateMenu(m) {
   if (!m || !m.ver || m.ver < 2) return buildMenu();
   if (m.ver === 2) {                                       // добавляем КБЖУ по каждой позиции там, где меню не меняли
@@ -68,12 +75,18 @@ function migrateMenu(m) {
 function load() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (_) { s = {}; }
+  const fresh = !Array.isArray(s.items);                   // первое открытие: пустой планер без готового меню, тренировок и плана обучения
+  const preset = (s.settings && s.settings.preset) || (fresh ? 'blank' : 'full');
   const st = {
     items: s.items || [], notes: s.notes || [], cards: s.cards || [], food: s.food || {}, body: s.body || {},
-    menu: migrateMenu(s.menu), products: s.products || {},
+    menu: preset === 'blank' && !s.menu ? emptyMenu() : migrateMenu(s.menu), products: s.products || {},
     learn: Object.assign({ start: today(), done: {}, doneAt: {}, custom: {}, secs: {}, timer: null }, s.learn || {}),
-    seeds: s.seeds || {}, settings: s.settings || {}, day: s.day || {}, shop: s.shop || {}
+    seeds: s.seeds || {}, settings: s.settings || {}, day: s.day || {}, shop: s.shop || {}, shopOwn: s.shopOwn || []
   };
+  st.settings.preset = preset;
+  PLAN = preset === 'full' ? (window.LEARN_PLAN || []) : [];
+  P = preset === 'full' ? P_FULL : { h: (st.settings.profile || {}).h || null, rate: 0 };
+  if (preset === 'blank') st.seeds.train = true;
   for (const d in st.food) if (st.food[d].weight && !st.body[d]) { st.body[d] = { w: st.food[d].weight }; delete st.food[d].weight; }
   if (!st.seeds.train) {                                   // тренировки на 8 недель вперёд
     const t0 = today();
@@ -177,6 +190,7 @@ function learnState() {                                   // что пройде
   return { ti, cur: ti != null ? learnProgress(ti) : null, missed: missed.reverse() };
 }
 function learnMark(k) {                                    // запоминаем день, когда тема закрыта целиком
+  if (!PLAN[k]) return;
   const at = state.learn.doneAt || (state.learn.doneAt = {});
   if (learnProgress(k).full) { if (!at[k]) at[k] = today(); } else delete at[k];
 }
@@ -272,6 +286,7 @@ function viewToday() {
     ${ring(pct, 76, 8, '#fff', `<b>${pct}%</b>`)}
   </section>
   ${nowCard ? `<div class="nows">${nowCard}</div>` : ''}
+  ${blank() && !state.items.length ? `<div class="hint"><b>Планер пока пустой, заполните его под себя</b><ol class="steps"><li>Добавьте первое дело кнопкой «+» или строкой «Быстро» ниже.</li><li>Во вкладке «Питание» составьте своё меню и укажите рост и вес.</li><li>Во вкладке «Развитие» добавьте свои курсы и ссылки.</li></ol>Уже пользовались планером на другом устройстве? Войдите во вкладке «Ещё», блок «Синхронизация».</div>` : ''}
   <div class="row spread"><h2>Расписание${todo.length ? ` · ${todo.length}` : ''}</h2><button class="btn sm ghost" data-act="weekSum" data-o="0">Итоги недели</button></div>
   ${ncl ? `<div class="alert">Накладка по времени: ${ncl} ${plural(ncl, 'дело пересекается', 'дела пересекаются', 'дел пересекаются')}. Они отмечены красным.</div>` : ''}
   <div class="card tlc">${todo.length ? todo.map(row).join('') : `<div class="empty">${closed.length ? 'Всё на сегодня сделано' : 'Дел пока нет. Добавьте первое ниже.'}</div>`}
@@ -283,8 +298,8 @@ function viewToday() {
     <button class="swap" data-act="toToday" data-id="${i.id}">На сегодня</button></div>`).join('')}${late.length > 8 ? `<div class="muted small" style="padding-top:8px">и ещё ${late.length - 8}</div>` : ''}</div>` : ''}` : ''}
   <h2>Коротко о дне</h2>
   <div class="stats">
-    <button data-act="tab" data-tab="food"><b>${fs.touched}<small> из ${fs.total}</small></b><span>${nextMeal ? `далее ${esc(nextMeal.name.toLowerCase())}${nextMeal.time ? ' ' + nextMeal.time : ''}` : 'питание отмечено'}</span></button>
-    <button data-act="learnGo" class="${lst.missed.length ? 'bad' : lst.cur && lst.cur.full ? 'good' : ''}"><b>${lb}</b><span>${lst.missed.length ? `развитие · долг ${lst.missed.length} ${plural(lst.missed.length, 'день', 'дня', 'дней')}` : lst.cur && lst.cur.full ? 'развитие пройдено' : 'развитие сегодня'}</span></button>
+    <button data-act="tab" data-tab="food"><b>${fs.total ? `${fs.touched}<small> из ${fs.total}</small>` : `${eatenTotals(dayMeals(t)).kcal}<small> ккал</small>`}</b><span>${!fs.total ? 'питание сегодня' : nextMeal ? `далее ${esc(nextMeal.name.toLowerCase())}${nextMeal.time ? ' ' + nextMeal.time : ''}` : 'питание отмечено'}</span></button>
+    <button data-act="learnGo" class="${lst.missed.length ? 'bad' : lst.cur && lst.cur.full ? 'good' : ''}"><b>${PLAN.length ? lb : `${Math.floor(learnSecs(t) / 60)}<small> мин</small>`}</b><span>${lst.missed.length ? `развитие · долг ${lst.missed.length} ${plural(lst.missed.length, 'день', 'дня', 'дней')}` : lst.cur && lst.cur.full ? 'развитие пройдено' : 'развитие сегодня'}</span></button>
     <button data-act="goBody"><b>${state.body[t] && state.body[t].w ? ru(state.body[t].w) : '—'}<small> кг</small></b><span>вес сегодня</span></button>
   </div>
   <div class="card">
@@ -403,7 +418,7 @@ function viewFood() {
       <label class="f">Что едим (по строке на позицию)<textarea data-ch="mItems" data-i="${i}" rows="5">${esc(m.items.join('\n'))}</textarea></label>
       <button class="btn sm danger" data-act="mealDel" data-i="${i}">Удалить приём пищи</button></div>`).join('')}
     <div class="actions"><button class="btn ghost" data-act="mealAdd">Добавить приём пищи</button>
-    <button class="btn plain" data-act="menuReset">Вернуть рассчитанное меню</button></div>`;
+    ${blank() ? '' : '<button class="btn plain" data-act="menuReset">Вернуть рассчитанное меню</button>'}</div>`;
   }
 
   const meals = dayMeals(ui.date), rec = state.food[ui.date] || {}, ds = foodStat([ui.date]), tot = dayTotals(meals), eat = eatenTotals(meals);
@@ -436,10 +451,11 @@ function viewFood() {
       <div class="muted small">${esc((state.menu.labels || [])[w] || '')}</div>
       <div class="muted small">За неделю по плану ${ws.eaten} из ${ws.total} позиций, замен: ${ws.repl}</div></div>
   </div>
-  ${tot.kcal ? `<div class="card eat"><div class="row spread"><span class="muted">Съедено за день</span><b>${eat.kcal} <small class="muted">из ${tot.kcal} ккал</small></b></div>
-    <div class="progress ${eat.kcal > tot.kcal * 1.05 ? 'over' : ''}"><b style="width:${Math.min(100, eat.kcal / tot.kcal * 100)}%"></b></div>
-    <div class="mac3">${[['Белки', eat.p, tot.p], ['Жиры', eat.f, tot.f], ['Углеводы', eat.c, tot.c]].map(([n, a, b]) => `<div><span>${n}</span><b>${a}<small> / ${b} г</small></b></div>`).join('')}</div>
+  ${tot.kcal || eat.kcal ? `<div class="card eat"><div class="row spread"><span class="muted">Съедено за день</span><b>${eat.kcal} <small class="muted">${tot.kcal ? `из ${tot.kcal} ` : ''}ккал</small></b></div>
+    ${tot.kcal ? `<div class="progress ${eat.kcal > tot.kcal * 1.05 ? 'over' : ''}"><b style="width:${Math.min(100, eat.kcal / tot.kcal * 100)}%"></b></div>` : ''}
+    <div class="mac3">${[['Белки', eat.p, tot.p], ['Жиры', eat.f, tot.f], ['Углеводы', eat.c, tot.c]].map(([n, a, b]) => `<div><span>${n}</span><b>${a}<small>${b ? ` / ${b}` : ''} г</small></b></div>`).join('')}</div>
     ${eat.repl ? `<div class="muted small" style="margin-top:8px">Замены без штрихкода не посчитаны: ${eat.repl}. Чтобы учесть, добавьте продукт кнопкой «＋ Продукт».</div>` : ''}</div>` : ''}
+  ${blank() && !meals.some(m => m.items.length) ? '<div class="hint">Меню пока пустое. Нажмите «Изменить меню» вверху, чтобы вписать свои блюда на этот день недели, или добавляйте продукты по штрихкоду прямо в приём пищи.</div>' : ''}
   ${mealsHtml || '<div class="card"><div class="empty">На этот день меню не задано. Нажмите «Изменить меню», чтобы составить.</div></div>'}
   <div class="card">
     <label class="f">Тренировка<select data-ch="train">${['', 'Была', 'Не было', 'День отдыха'].map(o => `<option ${rec.train === o ? 'selected' : ''}>${o}</option>`).join('')}</select></label>
@@ -450,6 +466,12 @@ function viewFood() {
 }
 
 function viewShop() {
+  if (blank()) {
+    const l = state.shopOwn, got = l.filter(i => i.done).length;
+    return `<div class="quick" style="margin:0 0 12px"><input id="shopNew" class="inp" placeholder="Что купить, например: куриное филе 1 кг" enterkeyhint="done" autocomplete="off"><button class="btn" data-act="shopAdd" aria-label="Добавить">+</button></div>
+    <div class="card">${l.length ? l.map(i => `<label class="shop ${i.done ? 'done' : ''}"><input type="checkbox" class="sm" data-ch="shopOwn" data-id="${i.id}" ${i.done ? 'checked' : ''}><span>${esc(i.name)}</span><button class="x" data-act="shopDel" data-id="${i.id}" aria-label="Удалить">×</button></label>`).join('') : '<div class="empty">Список покупок пуст. Добавьте первую позицию выше.</div>'}</div>
+    ${l.length ? `<div class="actions"><button class="btn ghost" data-act="shopShare">Поделиться списком</button>${got ? '<button class="btn danger" data-act="shopClear">Убрать купленное</button>' : ''}</div>` : ''}`;
+  }
   const wk = monday(today()), done = state.shop[wk] || {}, groups = window.MENU_SHOP || [];
   const all = groups.reduce((n, g) => n + g.items.length, 0), got = groups.reduce((n, g) => n + g.items.filter(i => done[i.id]).length, 0);
   return `<div class="card sum">${ring(all ? got / all * 100 : 0, 64, 7, 'var(--ok)', `<b>${got}</b><small>из ${all}</small>`)}
@@ -459,6 +481,7 @@ function viewShop() {
   <p class="muted small" style="margin:10px 4px">Если вы меняли меню вручную, список останется по рассчитанному меню.</p>`;
 }
 function shopText() {
+  if (blank()) return 'Покупки\n\n' + state.shopOwn.map(i => `${i.done ? '☑' : '☐'} ${i.name}`).join('\n');
   return 'Покупки на неделю\n' + (window.MENU_SHOP || []).map(g => `\n${g.name}\n` + g.items.map(i => `☐ ${i.name}: ${i.amt}`).join('\n')).join('\n');
 }
 
@@ -494,17 +517,17 @@ function bodyOut() {
   const r1 = x => Math.round(x * 10) / 10, both = days.filter(d => state.body[d].w != null && state.body[d].fat != null);
   const leanP = both.map(d => ({ d, y: r1((state.body[d].w - state.body[d].fat) / state.body[d].w * 100) }));
   const fatP = both.map(d => ({ d, y: r1(state.body[d].fat / state.body[d].w * 100) }));
-  const bmi = w.map(x => ({ d: x.d, y: r1(x.y / (P.h / 100) ** 2) })), b = bmi.length ? bmi[bmi.length - 1].y : null;
+  const bmi = P.h ? w.map(x => ({ d: x.d, y: r1(x.y / (P.h / 100) ** 2) })) : [], b = bmi.length ? bmi[bmi.length - 1].y : null;
   const bmiT = b == null ? '' : b < 18.5 ? 'ниже нормы' : b < 25 ? 'норма' : b < 30 ? 'выше нормы' : 'ожирение';
   return `<div class="tiles">${tile('Вес', w, 'кг', true)}${tile('Жир', f, 'кг', true)}${tile('Без жира', lean, 'кг', false)}</div>
   <div class="tiles">${tile('Сухая масса', leanP, '%', false)}${tile('Доля жира', fatP, '%', true)}
-    <div><span>ИМТ</span><b>${b != null ? ru(b) : '—'}</b><em class="${b == null ? '' : b >= 18.5 && b < 25 ? 'good' : 'bad'}">${b != null ? bmiT : 'нужен вес'}</em></div></div>
-  <p class="muted small" style="margin:0 4px 12px">Сухая масса в процентах: вес без жира, делённый на общий вес. ИМТ считается по росту ${P.h} см, норма от 18,5 до 25. ИМТ не отличает мышцы от жира, поэтому на сушке важнее доля жира. Цель: жир уходит, сухая масса в килограммах почти не меняется.</p>
-  <div class="card"><div class="row spread"><b>Вес, кг</b><span class="muted small">пунктир: план ${ru(P.rate)} кг в неделю</span></div>${chart(w, { color: 'var(--accent)', plan: P.rate })}</div>
+    <div><span>ИМТ</span><b>${b != null ? ru(b) : '—'}</b><em class="${b == null ? '' : b >= 18.5 && b < 25 ? 'good' : 'bad'}">${b != null ? bmiT : P.h ? 'нужен вес' : 'укажите рост'}</em></div></div>
+  <p class="muted small" style="margin:0 4px 12px">Сухая масса в процентах: вес без жира, делённый на общий вес. ${P.h ? `ИМТ считается по росту ${P.h} см, норма от 18,5 до 25.` : 'Чтобы появился ИМТ, укажите рост выше.'} ИМТ не отличает мышцы от жира, поэтому на сушке важнее доля жира. ${blank() ? '' : 'Цель: жир уходит, сухая масса в килограммах почти не меняется.'}</p>
+  <div class="card"><div class="row spread"><b>Вес, кг</b>${P.rate ? `<span class="muted small">пунктир: план ${ru(P.rate)} кг в неделю</span>` : ''}</div>${chart(w, { color: 'var(--accent)', plan: P.rate || null })}</div>
   <div class="card"><b>Масса жира, кг</b>${chart(f, { color: 'var(--warn)' })}</div>
   <div class="card"><b>Масса без жира, кг</b>${chart(lean, { color: 'var(--ok)' })}</div>
   ${days.length ? `<h2>Записи</h2><div class="card">${days.slice().reverse().slice(0, 30).map(d => `<button class="list-btn" data-act="day" data-date="${d}"><span>${short(d)}</span>
-    <b>${state.body[d].w != null ? ru(state.body[d].w) + ' кг' : ''}</b><span class="muted small" style="flex:none;min-width:118px;text-align:right">${state.body[d].fat != null ? 'жир ' + ru(state.body[d].fat) + ' кг' : ''}${state.body[d].w != null && state.body[d].fat != null ? `<br>сухая ${ru(r1((state.body[d].w - state.body[d].fat) / state.body[d].w * 100))}%` : ''}${state.body[d].w != null ? `<br>ИМТ ${ru(r1(state.body[d].w / (P.h / 100) ** 2))}` : ''}</span></button>`).join('')}</div>` : ''}`;
+    <b>${state.body[d].w != null ? ru(state.body[d].w) + ' кг' : ''}</b><span class="muted small" style="flex:none;min-width:118px;text-align:right">${state.body[d].fat != null ? 'жир ' + ru(state.body[d].fat) + ' кг' : ''}${state.body[d].w != null && state.body[d].fat != null ? `<br>сухая ${ru(r1((state.body[d].w - state.body[d].fat) / state.body[d].w * 100))}%` : ''}${state.body[d].w != null && P.h ? `<br>ИМТ ${ru(r1(state.body[d].w / (P.h / 100) ** 2))}` : ''}</span></button>`).join('')}</div>` : ''}`;
 }
 function viewBody() {
   const r = state.body[ui.date] || {};
@@ -514,10 +537,35 @@ function viewBody() {
       <button class="icon-btn flat" data-act="shift" data-d="1" aria-label="День вперёд">›</button></div>
     <div class="two"><label class="f" style="margin:0">Вес, кг<input inputmode="decimal" data-ch="bw" value="${r.w != null ? ru(r.w) : ''}" placeholder="82,0"></label>
     <label class="f" style="margin:0">Масса жира, кг<input inputmode="decimal" data-ch="bf" value="${r.fat != null ? ru(r.fat) : ''}" placeholder="с весов"></label></div>
+    ${blank() ? `<label class="f" style="margin:10px 0 0">Рост, см (нужен для ИМТ)<input inputmode="decimal" data-ch="prof" data-k="h" value="${P.h || ''}" placeholder="например 178"></label>` : ''}
     <p class="muted small" style="margin:10px 0 0">Взвешивайтесь утром натощак, после туалета. Смотрите на тренд за неделю, а не на один день.</p>
   </div><div id="bodyOut">${bodyOut()}</div>`;
 }
+function viewPlanOwn() {
+  const pr = state.settings.profile || {}, lastD = Object.keys(state.body).sort().reverse().find(d => state.body[d].w != null), w = lastD ? state.body[lastD].w : pr.w;
+  const ok = pr.h && pr.age && w, bmr = ok ? Math.round(10 * w + 6.25 * pr.h - 5 * pr.age + (pr.sex === 'f' ? -161 : 5)) : 0;
+  const tdee = Math.round(bmr * Number(pr.act || 1.375) / 10) * 10, g = Number(pr.goal || 1), target = Math.round(tdee * g / 10) * 10;
+  const sel = (k, opts, cur) => `<select data-ch="prof" data-k="${k}">${opts.map(([v, t]) => `<option value="${v}" ${String(cur) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+  return `<div class="card">
+    <div class="two"><label class="f">Пол${sel('sex', [['m', 'Мужской'], ['f', 'Женский']], pr.sex || 'm')}</label>
+    <label class="f">Возраст, лет<input inputmode="numeric" data-ch="prof" data-k="age" value="${pr.age || ''}"></label></div>
+    <div class="two"><label class="f">Рост, см<input inputmode="decimal" data-ch="prof" data-k="h" value="${pr.h || ''}"></label>
+    <label class="f">Вес, кг<input inputmode="decimal" data-ch="prof" data-k="w" value="${w ? ru(w) : ''}" ${lastD ? 'disabled' : ''}></label></div>
+    ${lastD ? '<p class="muted small" style="margin:-4px 0 10px">Вес берётся из последней записи во вкладке «Вес».</p>' : ''}
+    <label class="f">Активность${sel('act', ACT, pr.act || '1.375')}</label>
+    <label class="f" style="margin-bottom:0">Цель${sel('goal', GOALS, pr.goal || '1')}</label>
+  </div>
+  ${ok ? `<div class="card planhero"><div class="lbl">Ориентир на день</div><div class="big">${target} <small>ккал</small></div>
+      <div class="macro"><span>Белки <b>${Math.round(w * (g < 1 ? 2 : 1.6))} г</b></span><span>Жиры <b>${Math.round(w * 0.9)} г</b></span><span>Углеводы <b>${Math.max(0, Math.round((target - w * (g < 1 ? 2 : 1.6) * 4 - w * 0.9 * 9) / 4))} г</b></span></div></div>
+  <h2>Как посчитано</h2>
+  <div class="card kv"><div><span>Базовый обмен</span><b>≈ ${bmr} ккал</b></div><div><span>Расход за день</span><b>≈ ${tdee} ккал</b></div>
+    <div><span>Цель</span><b>${g < 1 ? 'дефицит 15%' : g > 1 ? 'профицит 10%' : 'без изменений'}</b></div></div>
+  <p class="muted small" style="margin:0 4px 12px">Расчёт по формуле Миффлина-Сан Жеора. Это ориентир, а не медицинское назначение. При проблемах со здоровьем согласуйте рацион с врачом.</p>`
+    : '<div class="hint">Заполните возраст, рост и вес, и планер посчитает ориентир по калориям и БЖУ.</div>'}
+  <label class="f">Свои заметки по плану<textarea data-ch="menuGoal" placeholder="Например: что не ем, какая цель и к какому сроку">${esc(state.menu.goal)}</textarea></label>`;
+}
 function viewPlan() {
+  if (blank()) return viewPlanOwn();
   const wk = window.MENU_WEEK || [], tr = wk.filter(d => d.label !== 'День отдыха'), rest = wk.filter(d => d.label === 'День отдыха');
   const avg = a => a.length ? Math.round(a.reduce((s, d) => s + d.kcal, 0) / a.length / 10) * 10 : 0;
   const av = (a, k) => a.length ? Math.round(a.reduce((s, d) => s + d[k], 0) / a.length) : 0;
@@ -560,7 +608,27 @@ function viewPlan() {
 }
 
 /* ---------- Развитие ---------- */
+function viewLearnOwn() {
+  const t = today(), secs = learnSecs(t), run = !!state.learn.timer, left = Math.max(0, LEARN_GOAL - secs), cust = state.learn.custom.own || [];
+  const totalMin = Math.floor(Object.keys(state.learn.secs).reduce((s, k) => s + learnSecs(k), state.learn.timer && !state.learn.secs[t] ? learnSecs(t) : 0) / 60);
+  const link = u => /^https?:\/\//i.test(u) ? esc(u) : '#';
+  ui.learnDay = 'own';
+  return head('Развитие') + `
+  <div class="card timer ${run ? 'run' : ''}">
+    ${ring(secs / LEARN_GOAL * 100, 132, 10, 'var(--accent)', `<b id="tm">${clock(left)}</b><small>${secs >= LEARN_GOAL ? 'час выполнен' : 'осталось'}</small>`)}
+    <div class="tbtn"><button class="btn" data-act="timer">${run ? 'Пауза' : secs ? 'Продолжить' : 'Начать час'}</button>
+    ${secs && !run ? '<button class="btn plain" data-act="timerReset">Сбросить</button>' : ''}</div>
+  </div>
+  <p class="muted small" style="margin:0 4px 6px">Таймер считает час в день на учёбу. Всего набрано: ${dur(totalMin)}.</p>
+  <div class="row spread"><h2>Мои материалы · ${cust.filter(c => c.done).length} из ${cust.length}</h2><button class="btn sm ghost" data-act="lcAdd">Добавить</button></div>
+  <div class="card">${cust.length ? cust.map(c => `<div class="mat"><input type="checkbox" data-ch="lc" data-id="${c.id}" ${c.done ? 'checked' : ''}>
+      <div>${c.url ? `<a href="${link(c.url)}" target="_blank" rel="noopener">${esc(c.title || c.url)}</a>` : `<span>${esc(c.title)}</span>`}
+      <small>${TYPE[c.type] || 'Ссылка'}${c.min ? ` · ${c.min} мин` : ''}</small></div>
+      <button class="x" data-act="lcDel" data-id="${c.id}" aria-label="Удалить">×</button></div>`).join('') : '<div class="empty">Здесь будет ваш список: курсы, видео, статьи и книги. Нажмите «Добавить».</div>'}</div>`;
+}
 function viewLearn() {
+  if (!PLAN.length) return viewLearnOwn();
+  if (ui.learnDay === 'own') ui.learnDay = null;
   const t = today(), ti = learnIdx(t);
   if (ui.learnDay == null) ui.learnDay = ti != null ? ti : 0;
   const i = ui.learnDay, d = PLAN[i], done = state.learn.done[i] || {}, cust = state.learn.custom[i] || [], tr = TRACKS[d[0]];
@@ -1165,6 +1233,9 @@ const actions = {
   water: el => { const d = state.day[today()] || (state.day[today()] = {}); d.water = Math.max(0, Math.min(20, (d.water || 0) + Number(el.dataset.d))); save(); },
   weekSum: el => { weekSheet(Number(el.dataset.o)); return false; },
   weekShare: () => { share('Итоги недели', weekText(weekStats(addDays(monday(today()), ui.form.off * 7)))); return false; },
+  shopAdd: () => { const el = $('#shopNew'), v = el.value.trim(); if (!v) return false; state.shopOwn.push({ id: uid(), name: v, done: false }); save(); },
+  shopDel: el => { state.shopOwn = state.shopOwn.filter(i => i.id !== el.dataset.id); save(); },
+  shopClear: () => { state.shopOwn = state.shopOwn.filter(i => !i.done); save(); },
   shopShare: () => { share('Покупки', shopText()); return false; },
   shopReset: () => { delete state.shop[monday(today())]; save(); },
   saveItem: () => { if (!saveItemForm()) return false; closeSheet(); },
@@ -1249,7 +1320,7 @@ const actions = {
       <label class="f">Ссылка<input id="lc-url" inputmode="url" placeholder="https://" autocomplete="off" autocapitalize="off"></label>
       <div class="two"><label class="f">Тип<select id="lc-type"><option value="v">Видео</option><option value="a">Статья</option><option value="c">Курс</option><option value="l">Другое</option></select></label>
       <label class="f">Минут<input id="lc-min" inputmode="numeric" placeholder="30"></label></div>
-      <button class="btn block" data-act="lcSave">Добавить в день ${ui.learnDay + 1}</button>`);
+      <button class="btn block" data-act="lcSave">${ui.learnDay === 'own' ? 'Добавить' : `Добавить в день ${ui.learnDay + 1}`}</button>`);
     setTimeout(() => $('#lc-title') && $('#lc-title').focus(), 50); return false;
   },
   lcSave: () => {
@@ -1298,6 +1369,12 @@ const changes = {
   fRepl: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].items[Number(el.dataset.i)].repl = el.value.trim(); return false; },
   mNote: el => { ensureDay(ui.date).meals[Number(el.dataset.m)].note = el.value.trim(); return false; },
   bw: el => bodySet('w', el),
+  shopOwn: el => { const i = state.shopOwn.find(x => x.id === el.dataset.id); if (i) i.done = el.checked; },
+  prof: el => {
+    const pr = state.settings.profile || (state.settings.profile = {}), k = el.dataset.k;
+    if (k === 'sex' || k === 'act' || k === 'goal') pr[k] = el.value; else { const v = num(el.value); if (v > 0) pr[k] = Math.round(v * 10) / 10; else delete pr[k]; }
+    if (blank()) P = { h: pr.h || null, rate: 0 };
+  },
   bf: el => bodySet('fat', el),
   train: el => { (state.food[ui.date] ||= {}).train = el.value; return false; },
   comment: el => { (state.food[ui.date] ||= {}).comment = el.value.trim(); return false; },
@@ -1320,6 +1397,7 @@ document.addEventListener('change', e => {
 
 document.addEventListener('input', e => { if (/^p-(kcal|p|f|c|g)$/.test(e.target.id)) prodCalc();
   if (e.target.id === 'i-qty') qtyCalc(); if (e.target.id === 'q') { ui.q = e.target.value; const o = $('#searchOut'); if (o) o.innerHTML = searchOut(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'shopNew') { e.preventDefault(); actions.shopAdd(); render(); const q = $('#shopNew'); if (q) q.focus(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'quick') { e.preventDefault(); actions.quick(); render(); const q = $('#quick'); if (q) q.focus(); } });
 
 /* Перетаскивание карточек мышью (на телефоне работают кнопки под карточкой) */
