@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 11;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 12;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
