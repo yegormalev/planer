@@ -2,14 +2,19 @@
   --bg: #f2f3f8; --card: #ffffff; --text: #14161c; --muted: #6c7385; --line: #e8eaf1; --field: #f4f5f9;
   --accent: #5b5bf0; --accent2: #8b5cf6; --accent-soft: #ececfe; --ok: #1fa971; --warn: #f08a3c; --danger: #e5484d;
   --shadow: 0 1px 2px rgba(20, 22, 40, .04), 0 8px 24px rgba(20, 22, 40, .06);
-  --radius: 20px;
+  --radius: 20px; color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0d0f14; --card: #181b23; --text: #f0f2f6; --muted: #949bab; --line: #272b36; --field: #11141a;
     --accent: #8587ff; --accent2: #a78bfa; --accent-soft: #23254a; --ok: #3ccf91; --warn: #f5a15d; --danger: #ff6b70;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25); color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #0d0f14; --card: #181b23; --text: #f0f2f6; --muted: #949bab; --line: #272b36; --field: #11141a;
+    --accent: #8587ff; --accent2: #a78bfa; --accent-soft: #23254a; --ok: #3ccf91; --warn: #f5a15d; --danger: #ff6b70;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25); color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
@@ -356,3 +361,32 @@ ol.steps li { margin-bottom: 4px; }
 .step { display: grid; grid-template-columns: 52px 1fr 52px; gap: 8px; margin-top: 5px; }
 .step .inp { margin: 0; text-align: center; font-size: 20px; font-weight: 700; }
 .step button { border-radius: 13px; background: var(--accent-soft); color: var(--accent); font-size: 24px; font-weight: 600; text-align: center; min-height: 46px; }
+
+/* Версия 10: пересечения, статус обучения, разгруженный экран «Сегодня» */
+.alert { background: color-mix(in srgb, var(--danger) 13%, var(--card)); color: var(--danger); border-radius: 14px; padding: 10px 14px; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.clash-t { color: var(--danger); font-size: 13px; font-weight: 600; margin-top: 3px; }
+.tl.clash .tl-t b, .tl.clash .tl-t span, .item.clash .meta .time { color: var(--danger); }
+.tl.clash .tl-b { border-left-color: var(--danger); }
+.item.clash { box-shadow: inset 3px 0 0 var(--danger); padding-left: 10px; }
+.day i.clash, .day.sel i.clash { background: var(--danger); width: 7px; height: 7px; }
+.day.sel i.clash { box-shadow: 0 0 0 1.5px #fff; }
+.fold { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 0; font-size: 14px; font-weight: 650; color: var(--muted); }
+.fold em { font-style: normal; color: var(--accent); font-weight: 600; }
+.fold span { display: inline-flex; align-items: center; gap: 7px; }
+.fold.card { padding: 13px 16px; margin-top: 12px; color: var(--text); }
+.tlc .fold { border-bottom: 1px solid var(--line); } .tlc .fold:last-child { border-bottom: 0; } .tlc .tl + .fold { border-top: 0; }
+.hero { margin-bottom: 12px; }
+.stats span { display: block; line-height: 1.25; margin-top: 2px; }
+.stats button.bad b, .stats button.bad span { color: var(--danger); }
+.stats button.good b { color: var(--ok); }
+.hab > button b { display: block; } .hab > button small { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lstat { background: var(--card); border-radius: var(--radius); padding: 13px 16px; margin-bottom: 12px; box-shadow: var(--shadow); border-left: 4px solid var(--accent); }
+.lstat p { margin: 3px 0 0; font-size: 14px; color: var(--muted); }
+.lstat.ok { border-left-color: var(--ok); } .lstat.ok b { color: var(--ok); }
+.lstat.bad { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--card)); } .lstat.bad > b { color: var(--danger); }
+.lstat button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 2px; margin-top: 8px; border-top: 1px solid var(--line); font-weight: 600; font-size: 15px; }
+.lstat button small, .lstat > small { display: block; color: var(--muted); font-weight: 500; font-size: 13px; }
+.lstat > small { margin-top: 8px; }
+.lstat button em { font-style: normal; color: var(--muted); font-size: 20px; }
+u.ok, u.bad { text-decoration: none; font-weight: 650; } u.ok { color: var(--ok); } u.bad { color: var(--danger); }
+.lday.miss i { background: var(--danger) !important; }
