@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 10;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 11;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -91,6 +91,7 @@ let state = load();
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
   catch (_) { toast('Не удалось сохранить: память браузера заполнена'); }
+  if (window.syncSoon) window.syncSoon();
 }
 save();
 
@@ -672,7 +673,7 @@ function viewMore() {
   const sup = 'Notification' in window, perm = sup ? Notification.permission : 'unsupported';
   const permText = { granted: 'Включены', denied: 'Запрещены в настройках', default: 'Не включены', unsupported: 'Недоступны в этом браузере' }[perm];
   const open = state.cards.filter(c => c.col !== 'closed').length;
-  const le = state.settings.lastExport, stale = state.items.length > 10 && (!le || diffDays(le, today()) > 7);
+  const le = state.settings.lastExport, stale = state.items.length > 10 && (!le || diffDays(le, today()) > 7) && !(typeof sy !== 'undefined' && sy.ses);
   return head('Ещё') + `
   <input class="inp search" id="q" type="search" value="${esc(ui.q)}" placeholder="Поиск по задачам, заметкам и карточкам" autocomplete="off">
   <div id="searchOut">${searchOut()}</div>
@@ -682,6 +683,8 @@ function viewMore() {
   <h2>Оформление</h2>
   ${seg('theme', state.settings.theme === 'light' || state.settings.theme === 'dark' ? state.settings.theme : 'auto', [['auto', 'Как в системе'], ['light', 'Светлая'], ['dark', 'Тёмная']])}
   ${isStandalone() ? '' : `<div class="hint"><b>Как поставить на айфон</b><ol class="steps"><li>Откройте этот сайт в Safari.</li><li>Нажмите «Поделиться» (квадрат со стрелкой).</li><li>Выберите «На экран «Домой»».</li></ol></div>`}
+  <h2>Синхронизация</h2>
+  <div class="card" id="syncCard">${typeof syncCard === 'function' ? syncCard() : ''}</div>
   <h2>Уведомления</h2>
   <div class="card">
     <div class="row spread"><span>Статус: <b>${permText}</b></span>
@@ -694,7 +697,7 @@ function viewMore() {
     <button class="list-btn" data-act="import"><span>Восстановить из копии</span><span class="muted">›</span></button>
     <button class="list-btn" data-act="shareApp"><span>Поделиться ссылкой на планер</span><span class="muted">›</span></button>
   </div>
-  <p class="muted small" style="margin:0 4px">Все записи хранятся только на этом устройстве. Задач: ${state.items.length}, заметок: ${state.notes.length}.</p>
+  <p class="muted small" style="margin:0 4px">${typeof sy !== 'undefined' && sy.ses ? 'Записи хранятся на этом устройстве и в вашем облаке Supabase.' : 'Все записи хранятся только на этом устройстве.'} Задач: ${state.items.length}, заметок: ${state.notes.length}.</p>
   <div class="row spread" style="margin:14px 4px 0"><span class="muted small">Версия ${APP_VERSION}</span><button class="btn sm ghost" data-act="update">Проверить обновление</button></div>`;
 }
 
