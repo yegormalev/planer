@@ -2,7 +2,7 @@
 /* Мой планер. Все данные лежат в localStorage этого устройства. */
 
 const KEY = 'planer.v1';
-const APP_VERSION = 15;                                   // менять вместе с version.json и кэшем в sw.js
+const APP_VERSION = 16;                                   // менять вместе с version.json и кэшем в sw.js
 const CATS = [
   { id: 'work', name: 'Работа', color: '#4f6ef7' },
   { id: 'study', name: 'Учёба', color: '#9b5de5' },
@@ -493,24 +493,30 @@ function viewFood() {
   ${rec.meals ? '<button class="btn danger" data-act="foodReset">Сбросить отметки дня</button>' : ''}</div>`;
 }
 
+function shopOwnBlock() {
+  const l = state.shopOwn, got = l.filter(i => i.done).length;
+  return `<div class="quick" style="margin:0 0 12px"><input id="shopNew" class="inp" placeholder="Что купить, например: куриное филе 1 кг" enterkeyhint="done" autocomplete="off"><button class="btn" data-act="shopAdd" aria-label="Добавить">+</button></div>
+    <div class="card">${l.length ? l.map(i => `<label class="shop ${i.done ? 'done' : ''}"><input type="checkbox" class="sm" data-ch="shopOwn" data-id="${i.id}" ${i.done ? 'checked' : ''}><span>${esc(i.name)}</span><button class="x" data-act="shopDel" data-id="${i.id}" aria-label="Удалить">×</button></label>`).join('') : '<div class="empty">Свой список пуст. Впишите позицию выше и нажмите «+».</div>'}
+    ${got ? '<button class="btn sm ghost" style="margin-top:10px" data-act="shopClear">Убрать купленное</button>' : ''}</div>`;
+}
 function viewShop() {
-  if (blank()) {
-    const l = state.shopOwn, got = l.filter(i => i.done).length;
-    return `<div class="quick" style="margin:0 0 12px"><input id="shopNew" class="inp" placeholder="Что купить, например: куриное филе 1 кг" enterkeyhint="done" autocomplete="off"><button class="btn" data-act="shopAdd" aria-label="Добавить">+</button></div>
-    <div class="card">${l.length ? l.map(i => `<label class="shop ${i.done ? 'done' : ''}"><input type="checkbox" class="sm" data-ch="shopOwn" data-id="${i.id}" ${i.done ? 'checked' : ''}><span>${esc(i.name)}</span><button class="x" data-act="shopDel" data-id="${i.id}" aria-label="Удалить">×</button></label>`).join('') : '<div class="empty">Список покупок пуст. Добавьте первую позицию выше.</div>'}</div>
-    ${l.length ? `<div class="actions"><button class="btn ghost" data-act="shopShare">Поделиться списком</button>${got ? '<button class="btn danger" data-act="shopClear">Убрать купленное</button>' : ''}</div>` : ''}`;
-  }
+  if (blank()) return shopOwnBlock() + (state.shopOwn.length ? '<div class="actions"><button class="btn ghost" data-act="shopShare">Поделиться списком</button></div>' : '');
   const wk = monday(today()), done = state.shop[wk] || {}, groups = window.MENU_SHOP || [];
   const all = groups.reduce((n, g) => n + g.items.length, 0), got = groups.reduce((n, g) => n + g.items.filter(i => done[i.id]).length, 0);
-  return `<div class="card sum">${ring(all ? got / all * 100 : 0, 64, 7, 'var(--ok)', `<b>${got}</b><small>из ${all}</small>`)}
-    <div><b>Список на неделю</b><div class="muted small">Посчитан по меню с понедельника по воскресенье. Мясо, рыба и крупы указаны в сыром и сухом виде.</div></div></div>
-  ${groups.map(g => `<h2>${g.name}</h2><div class="card">${g.items.map(i => `<label class="shop ${done[i.id] ? 'done' : ''}"><input type="checkbox" class="sm" data-ch="shop" data-id="${i.id}" ${done[i.id] ? 'checked' : ''}><span>${esc(i.name)}</span><b>${i.amt}</b></label>`).join('')}</div>`).join('')}
-  <div class="actions"><button class="btn ghost" data-act="shopShare">Поделиться списком</button>${got ? '<button class="btn danger" data-act="shopReset">Снять отметки</button>' : ''}</div>
-  <p class="muted small" style="margin:10px 4px">Если вы меняли меню вручную, список останется по рассчитанному меню.</p>`;
+  const own = state.shopOwn, ownGot = own.filter(i => i.done).length;
+  return `<div class="card sum">${ring(all + own.length ? (got + ownGot) / (all + own.length) * 100 : 0, 64, 7, 'var(--ok)', `<b>${got + ownGot}</b><small>из ${all + own.length}</small>`)}
+    <div><b>Покупки на неделю</b><div class="muted small">Сверху ваш собственный список, ниже продукты, посчитанные по меню.</div></div></div>
+  <h2>Мой список${own.length ? ` · ${ownGot} из ${own.length}` : ''}</h2>
+  ${shopOwnBlock()}
+  <div class="row spread"><h2>По меню · ${got} из ${all}</h2><button class="btn sm ghost" data-act="tdToggle" data-k="shopMenu">${ui.td.shopMenu ? 'Показать' : 'Свернуть'}</button></div>
+  ${ui.td.shopMenu ? '' : `<p class="muted small" style="margin:0 4px 4px">Посчитано с понедельника по воскресенье. Мясо, рыба и крупы указаны в сыром и сухом виде. Если вы меняли меню вручную, этот список останется по рассчитанному меню.</p>
+  ${groups.map(g => `<h2>${g.name}</h2><div class="card">${g.items.map(i => `<label class="shop ${done[i.id] ? 'done' : ''}"><input type="checkbox" class="sm" data-ch="shop" data-id="${i.id}" ${done[i.id] ? 'checked' : ''}><span>${esc(i.name)}</span><b>${i.amt}</b></label>`).join('')}</div>`).join('')}`}
+  <div class="actions"><button class="btn ghost" data-act="shopShare">Поделиться списком</button>${got ? '<button class="btn danger" data-act="shopReset">Снять отметки по меню</button>' : ''}</div>`;
 }
 function shopText() {
-  if (blank()) return 'Покупки\n\n' + state.shopOwn.map(i => `${i.done ? '☑' : '☐'} ${i.name}`).join('\n');
-  return 'Покупки на неделю\n' + (window.MENU_SHOP || []).map(g => `\n${g.name}\n` + g.items.map(i => `☐ ${i.name}: ${i.amt}`).join('\n')).join('\n');
+  const own = state.shopOwn.map(i => `${i.done ? '☑' : '☐'} ${i.name}`).join('\n');
+  if (blank()) return 'Покупки\n\n' + own;
+  return 'Покупки на неделю\n' + (own ? `\nМой список\n${own}\n` : '') + (ui.td.shopMenu ? '' : (window.MENU_SHOP || []).map(g => `\n${g.name}\n` + g.items.map(i => `☐ ${i.name}: ${i.amt}`).join('\n')).join('\n'));
 }
 
 function chart(pts, o) {
